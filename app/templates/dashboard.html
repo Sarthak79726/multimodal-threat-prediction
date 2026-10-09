@@ -1,0 +1,48 @@
+<!-- Medical Analytics Dashboard Reusable Presentation Templates -->
+
+<!-- HEADER_TEMPLATE_START -->
+<div class="med-header">
+  <div class="med-header-title-row">
+    <div>
+      <h1 class="med-title">Multimodal Threat Prediction Engine</h1>
+      <p class="med-subtitle">Physiological, Geospatial & Environmental Risk Assessment</p>
+    </div>
+    <div class="med-badge-location">
+      BIT Mesra · Ranchi
+    </div>
+  </div>
+</div>
+<!-- HEADER_TEMPLATE_END -->
+
+<!-- OVERALL_PANEL_TEMPLATE_START -->
+<div class="med-overall-panel">
+  <div class="med-overall-header">Overall Risk Assessment</div>
+  <div class="med-overall-content">
+    <div class="med-score-hero">
+      <div class="med-score-hero-title">Prototype Threat-Risk Score</div>
+      <div class="med-score-hero-num">{{final_score_pct}}%</div>
+      <div class="med-score-badge {{status_badge_cls}}">{{status}}</div>
+    </div>
+    <div class="med-breakdown-box">
+      <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;">
+        Branch Contribution Breakdown
+      </div>
+      <div class="med-breakdown-item">
+        <span>Physiological Stress (40% Weight):</span>
+        <span><b>{{phys_pct}}% × 0.40 = {{contrib_p}}%</b></span>
+      </div>
+      <div class="med-breakdown-item">
+        <span>Location Risk (25% Weight):</span>
+        <span><b>{{loc_pct}}% × 0.25 = {{contrib_l}}%</b></span>
+      </div>
+      <div class="med-breakdown-item">
+        <span>Environment Risk (35% Weight):</span>
+        <span><b>{{env_pct}}% × 0.35 = {{contrib_e}}%</b></span>
+      </div>
+      <div class="med-rationale-note">
+        <b>Decision Rationale:</b> {{explanation_txt}}
+      </div>
+    </div>
+  </div>
+</div>
+<!-- OVERALL_PANEL_TEMPLATE_END -->
