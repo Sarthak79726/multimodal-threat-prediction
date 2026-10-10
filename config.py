@@ -49,7 +49,13 @@ RISK_THRESHOLDS = {
 }
 
 # BIT Mesra Campus GPS Configuration & Centralized Landmarks Database
-from src.location.landmarks import BIT_MESRA_CENTER, BIT_MESRA_LANDMARKS_DB, get_all_landmarks_list
+from src.location.landmarks import (
+    BIT_MESRA_CENTER,
+    BIT_MESRA_LANDMARKS_DB,
+    get_all_landmarks_list,
+    get_landmark_by_id
+)
+import src.location.landmarks as landmarks
 
 BIT_MESRA_LANDMARKS = get_all_landmarks_list()
 

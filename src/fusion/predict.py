@@ -6,8 +6,14 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-# Ensure project root is in sys.path
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+# Ensure project root is prioritized in sys.path
+_project_root = str(Path(__file__).resolve().parent.parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+elif sys.path[0] != _project_root:
+    sys.path.remove(_project_root)
+    sys.path.insert(0, _project_root)
+
 import config
 
 class MultimodalThreatPredictor:
