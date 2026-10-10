@@ -113,7 +113,7 @@ class CampusMapAnalyzer:
                 "latitude": round(float(lat), 6),
                 "longitude": round(float(lon), 6),
                 "accuracy_meters": round(acc_val, 1),
-                "timestamp": timestamp or datetime.datetime.now().isoformat()
+                "timestamp": timestamp or config.get_campus_now().isoformat()
             },
             "nearest_landmark": {
                 "id": nearest_landmark["id"],

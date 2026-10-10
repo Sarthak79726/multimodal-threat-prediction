@@ -249,6 +249,10 @@ if "gps_query_counter" not in st.session_state:
     st.session_state["gps_query_counter"] = 0
 if "last_table_selected_row" not in st.session_state:
     st.session_state["last_table_selected_row"] = None
+if "client_hour" not in st.session_state:
+    st.session_state["client_hour"] = None
+if "client_time_str" not in st.session_state:
+    st.session_state["client_time_str"] = None
 
 # Render Header
 render_header()
@@ -333,6 +337,11 @@ with tab1:
 
         if gps_payload and isinstance(gps_payload, dict):
             p_status = gps_payload.get("status")
+            if "client_hour" in gps_payload and gps_payload["client_hour"] is not None:
+                st.session_state["client_hour"] = float(gps_payload["client_hour"])
+            if "client_time_str" in gps_payload and gps_payload["client_time_str"] is not None:
+                st.session_state["client_time_str"] = str(gps_payload["client_time_str"])
+
             if p_status == "SUCCESS" and "coords" in gps_payload:
                 coords = gps_payload["coords"]
                 r_lat = float(coords["latitude"])
@@ -341,12 +350,15 @@ with tab1:
                 r_ts = gps_payload.get("timestamp")
                 is_cached = bool(gps_payload.get("is_cached", False))
 
+                now_campus = config.get_campus_now()
+                calc_hour = st.session_state.get("client_hour") or (now_campus.hour + now_campus.minute / 60.0)
+
                 analysis_res = campus_analyzer.analyze_gps(
                     lat=r_lat,
                     lon=r_lon,
                     accuracy=r_acc,
                     timestamp=r_ts,
-                    time_of_day_hour=datetime.datetime.now().hour
+                    time_of_day_hour=calc_hour
                 )
 
                 st.session_state["gps_status"] = analysis_res["status"]
@@ -438,11 +450,14 @@ with tab1:
   <span class="med-card-subtitle">Situational Factors</span>
 </div>""")
         
-        current_time_str = datetime.datetime.now().strftime("%I:%M %p")
-        st.text_input("Time of Day", value=current_time_str, disabled=True)
+        now_campus = config.get_campus_now()
+        current_time_str = st.session_state.get("client_time_str") or now_campus.strftime("%I:%M %p")
+        display_time = f"{current_time_str} IST" if "IST" not in current_time_str else current_time_str
+        st.text_input("Time of Day", value=display_time, disabled=True)
         
         def on_env_change():
-            current_hour = datetime.datetime.now().hour + datetime.datetime.now().minute / 60.0
+            now_campus_inner = config.get_campus_now()
+            current_hour = st.session_state.get("client_hour") or (now_campus_inner.hour + now_campus_inner.minute / 60.0)
             l_opt = st.session_state.get("radio_lighting", "Light")
             c_opt = st.session_state.get("radio_crowd", "Medium")
             env_score = predictor.predict_environment(
@@ -464,7 +479,8 @@ with tab1:
         crowd_opt = st.radio("Crowd Density", ["Low", "Medium", "High"], horizontal=True, key="radio_crowd", on_change=on_env_change)
         
         if st.button("Analyze Environment", key="btn_env", use_container_width=True):
-            current_hour = datetime.datetime.now().hour + datetime.datetime.now().minute / 60.0
+            now_campus_btn = config.get_campus_now()
+            current_hour = st.session_state.get("client_hour") or (now_campus_btn.hour + now_campus_btn.minute / 60.0)
             env_score = predictor.predict_environment(
                 time_of_day_hour=current_hour,
                 lighting_condition=lighting_opt,
@@ -515,34 +531,63 @@ with tab2:
 
     sp_col1, sp_col2 = st.columns([1, 1])
 
+    landmark_names = [lm["name"] for lm in config.BIT_MESRA_LANDMARKS]
+
+    def apply_landmark_selection(target_lm):
+        if not target_lm:
+            return
+        now_campus_tab = config.get_campus_now()
+        calc_hour = st.session_state.get("client_hour") or (now_campus_tab.hour + now_campus_tab.minute / 60.0)
+        analysis_res = campus_analyzer.analyze_gps(
+            lat=target_lm["latitude"],
+            lon=target_lm["longitude"],
+            accuracy=5.0,
+            time_of_day_hour=calc_hour
+        )
+        st.session_state["gps_status"] = "CONNECTED"
+        st.session_state["location_res"] = analysis_res
+        st.session_state["location_score"] = analysis_res["location_risk_score"]
+        if st.session_state.get("analyzed_threat") is not None:
+            st.session_state["analyzed_threat"] = predictor.predict_fusion(
+                physiological_stress_score=st.session_state["physio_score"],
+                location_risk_score=st.session_state["location_score"],
+                environment_risk_score=st.session_state["env_score"],
+                threshold=0.50
+            )
+
+    def on_landmark_preset_change():
+        sel_name = st.session_state.get("tab2_preset_radio")
+        if sel_name:
+            target_lm = next((lm for lm in config.BIT_MESRA_LANDMARKS if lm["name"] == sel_name), config.BIT_MESRA_LANDMARKS[0])
+            apply_landmark_selection(target_lm)
+            if sel_name in landmark_names:
+                idx = landmark_names.index(sel_name)
+                st.session_state["last_table_selected_row"] = idx
+                st.session_state["landmark_table_select"] = {"selection": {"rows": [idx], "columns": []}}
+
+    def on_landmark_table_select():
+        table_state = st.session_state.get("landmark_table_select")
+        if not table_state:
+            return
+        selection = getattr(table_state, "selection", None) or (table_state.get("selection") if isinstance(table_state, dict) else None)
+        if not selection:
+            return
+        rows = getattr(selection, "rows", None) or (selection.get("rows") if isinstance(selection, dict) else None)
+        if rows and len(rows) > 0:
+            selected_row_idx = rows[0]
+            if 0 <= selected_row_idx < len(config.BIT_MESRA_LANDMARKS):
+                st.session_state["last_table_selected_row"] = selected_row_idx
+                clicked_lm = config.BIT_MESRA_LANDMARKS[selected_row_idx]
+                st.session_state["tab2_preset_radio"] = clicked_lm["name"]
+                apply_landmark_selection(clicked_lm)
+        else:
+            st.session_state["last_table_selected_row"] = None
+
     with sp_col1:
         st.markdown("#### ⚙️ Campus Landmark Presets")
         
-        landmark_names = [lm["name"] for lm in config.BIT_MESRA_LANDMARKS]
-        
         loc_res = st.session_state.get("location_res")
         cur_lm_name = loc_res["nearest_landmark"]["name"] if (loc_res and loc_res.get("nearest_landmark")) else landmark_names[0]
-
-        def on_landmark_preset_change():
-            sel_name = st.session_state.get("tab2_preset_radio")
-            if sel_name:
-                target_lm = next((lm for lm in config.BIT_MESRA_LANDMARKS if lm["name"] == sel_name), config.BIT_MESRA_LANDMARKS[0])
-                analysis_res = campus_analyzer.analyze_gps(
-                    lat=target_lm["latitude"],
-                    lon=target_lm["longitude"],
-                    accuracy=5.0,
-                    time_of_day_hour=datetime.datetime.now().hour
-                )
-                st.session_state["gps_status"] = "CONNECTED"
-                st.session_state["location_res"] = analysis_res
-                st.session_state["location_score"] = analysis_res["location_risk_score"]
-                if st.session_state.get("analyzed_threat") is not None:
-                    st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                        physiological_stress_score=st.session_state["physio_score"],
-                        location_risk_score=st.session_state["location_score"],
-                        environment_risk_score=st.session_state["env_score"],
-                        threshold=0.50
-                    )
 
         if "tab2_preset_radio" not in st.session_state or st.session_state["tab2_preset_radio"] not in landmark_names:
             st.session_state["tab2_preset_radio"] = cur_lm_name
@@ -644,34 +689,11 @@ with tab2:
             st.map(combined_df[["latitude", "longitude"]])
 
         st.markdown("#### 📋 BIT Mesra Landmark Inventory")
-        df_event = st.dataframe(
+        st.dataframe(
             map_df[["Name", "Type"]],
             use_container_width=True,
             hide_index=True,
             selection_mode="single-row",
-            on_select="rerun",
+            on_select=on_landmark_table_select,
             key="landmark_table_select"
         )
-        
-        if df_event and hasattr(df_event, "selection") and df_event.selection and "rows" in df_event.selection and len(df_event.selection["rows"]) > 0:
-            selected_row_idx = df_event.selection["rows"][0]
-            if st.session_state.get("last_table_selected_row") != selected_row_idx:
-                st.session_state["last_table_selected_row"] = selected_row_idx
-                clicked_lm = config.BIT_MESRA_LANDMARKS[selected_row_idx]
-                analysis_res = campus_analyzer.analyze_gps(
-                    lat=clicked_lm["latitude"],
-                    lon=clicked_lm["longitude"],
-                    accuracy=5.0,
-                    time_of_day_hour=datetime.datetime.now().hour
-                )
-                st.session_state["gps_status"] = "CONNECTED"
-                st.session_state["location_res"] = analysis_res
-                st.session_state["location_score"] = analysis_res["location_risk_score"]
-                st.session_state["tab2_preset_radio"] = clicked_lm["name"]
-                if st.session_state.get("analyzed_threat") is not None:
-                    st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                        physiological_stress_score=st.session_state["physio_score"],
-                        location_risk_score=st.session_state["location_score"],
-                        environment_risk_score=st.session_state["env_score"],
-                        threshold=0.50
-                    )

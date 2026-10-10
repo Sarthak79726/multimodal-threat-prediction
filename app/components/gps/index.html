@@ -27,8 +27,6 @@
       box-sizing: border-box;
       margin: 0;
       padding: 0;
-      -webkit-user-modify: read-only;
-      user-modify: read-only;
     }
 
     body {
@@ -322,6 +320,7 @@
             const isCached = (Date.now() - position.timestamp) > 4000;
             const isLowAcc = r_acc > 100;
 
+            const clientDate = new Date();
             const payload = {
               status: "SUCCESS",
               coords: {
@@ -333,6 +332,8 @@
                 speed: position.coords.speed
               },
               timestamp: position.timestamp,
+              client_hour: clientDate.getHours() + clientDate.getMinutes() / 60.0,
+              client_time_str: clientDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }),
               is_cached: isCached,
               stage: "fast",
               request_id: thisReqId
@@ -400,6 +401,7 @@
             if (reqId !== currentRequestId) return;
             const newAcc = refinedPos.coords.accuracy;
             if (newAcc < currentAcc) {
+              const clientDate = new Date();
               const refPayload = {
                 status: "SUCCESS",
                 coords: {
@@ -408,6 +410,8 @@
                   accuracy: newAcc
                 },
                 timestamp: refinedPos.timestamp,
+                client_hour: clientDate.getHours() + clientDate.getMinutes() / 60.0,
+                client_time_str: clientDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }),
                 is_cached: false,
                 stage: "refined",
                 request_id: reqId

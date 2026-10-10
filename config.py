@@ -62,3 +62,17 @@ def get_risk_level(probability: float) -> str:
     else:
         return "HIGH"
 
+# BIT Mesra Campus Timezone Configuration (Ranchi, Jharkhand, India - IST: UTC+5:30)
+try:
+    from zoneinfo import ZoneInfo
+    CAMPUS_TIMEZONE = ZoneInfo("Asia/Kolkata")
+except Exception:
+    import datetime
+    CAMPUS_TIMEZONE = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+def get_campus_now():
+    """Returns the current datetime localized to BIT Mesra Campus (Asia/Kolkata / IST) timezone."""
+    import datetime
+    return datetime.datetime.now(CAMPUS_TIMEZONE)
+
+

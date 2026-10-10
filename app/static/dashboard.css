@@ -359,8 +359,6 @@ div.stButton > button:hover {
 [data-testid="stMarkdownContainer"],
 [data-testid="stText"],
 [data-testid="stMetric"] {
-  -webkit-user-modify: read-only !important;
-  user-modify: read-only !important;
   caret-color: transparent !important;
 }
 
@@ -371,21 +369,15 @@ div[data-baseweb="select"] {
   cursor: pointer !important;
   -webkit-user-select: none !important;
   user-select: none !important;
-  -webkit-user-modify: read-only !important;
-  user-modify: read-only !important;
 }
 
 div[data-baseweb="select"] * {
   cursor: pointer !important;
-  -webkit-user-modify: read-only !important;
-  user-modify: read-only !important;
 }
 
 div[data-baseweb="select"] input {
   caret-color: transparent !important;
   cursor: pointer !important;
-  -webkit-user-modify: read-only !important;
-  user-modify: read-only !important;
   pointer-events: none !important;
 }
 
@@ -394,8 +386,6 @@ div[data-baseweb="popover"],
 div[data-baseweb="menu"],
 ul[role="listbox"],
 li[role="option"] {
-  -webkit-user-modify: read-only !important;
-  user-modify: read-only !important;
   caret-color: transparent !important;
   cursor: pointer !important;
 }
