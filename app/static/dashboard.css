@@ -345,3 +345,83 @@ div.stButton > button:hover {
   color: var(--primary-accent) !important;
   border-bottom: 2px solid var(--primary-accent) !important;
 }
+
+/* ==========================================================================
+   Mobile UI & Read-Only Text Protection
+   Prevents accidental carets, focus highlights, and editing of static labels
+   ========================================================================== */
+
+/* Remove text insertion caret and enforce read-only on static dashboard containers */
+.stApp, .med-header, .med-card, .med-overall-panel,
+.med-header *, .med-card-header, .med-card-title, .med-card-subtitle,
+.med-metric-row, .med-metric-label, .med-metric-value,
+.med-score-box, .med-score-hero, .med-breakdown-box, .med-rationale-note,
+[data-testid="stMarkdownContainer"],
+[data-testid="stText"],
+[data-testid="stMetric"] {
+  -webkit-user-modify: read-only !important;
+  user-modify: read-only !important;
+  caret-color: transparent !important;
+}
+
+/* BaseWeb Selectbox (Subject Selector & Window Selector) Protection:
+   Prevent combobox inputs from behaving as editable text boxes or triggering
+   the soft keyboard on mobile touch devices. Users can only select from dropdown options. */
+div[data-baseweb="select"] {
+  cursor: pointer !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-user-modify: read-only !important;
+  user-modify: read-only !important;
+}
+
+div[data-baseweb="select"] * {
+  cursor: pointer !important;
+  -webkit-user-modify: read-only !important;
+  user-modify: read-only !important;
+}
+
+div[data-baseweb="select"] input {
+  caret-color: transparent !important;
+  cursor: pointer !important;
+  -webkit-user-modify: read-only !important;
+  user-modify: read-only !important;
+  pointer-events: none !important;
+}
+
+/* Dropdown popover list items */
+div[data-baseweb="popover"],
+div[data-baseweb="menu"],
+ul[role="listbox"],
+li[role="option"] {
+  -webkit-user-modify: read-only !important;
+  user-modify: read-only !important;
+  caret-color: transparent !important;
+  cursor: pointer !important;
+}
+
+/* Alert Boxes for GPS Status & Accuracy Feedback */
+.med-alert-warn {
+  background-color: var(--status-warn-bg);
+  color: var(--status-warn-color);
+  border: 1px solid var(--status-warn-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  margin-top: 10px;
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+.med-alert-error {
+  background-color: var(--status-danger-bg);
+  color: var(--status-danger-color);
+  border: 1px solid var(--status-danger-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  margin-top: 10px;
+  line-height: 1.4;
+  font-weight: 500;
+}
+

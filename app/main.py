@@ -5,8 +5,15 @@ import datetime
 import pandas as pd
 import numpy as np
 import streamlit as st
+import streamlit.components.v1 as components
 from pathlib import Path
-from streamlit_js_eval import get_geolocation
+
+# Declare custom GPS Sensor Component
+_gps_component_dir = Path(__file__).parent / "components" / "gps"
+if _gps_component_dir.exists():
+    gps_sensor = components.declare_component("gps_sensor", path=str(_gps_component_dir))
+else:
+    gps_sensor = None
 
 try:
     import plotly.express as px
@@ -39,6 +46,79 @@ def load_css():
             st.html(f"<style>{f.read()}</style>")
 
 load_css()
+
+# Client-side mobile hardening script to prevent text carets, accidental contentEditable, and mobile keyboard triggering on selectboxes
+def inject_mobile_protections():
+    protection_js = """<script>
+(function() {
+  function enforceReadOnly() {
+    // 1. Ensure document is never in designMode or contentEditable
+    try {
+      if (document.designMode && document.designMode.toLowerCase() === 'on') {
+        document.designMode = 'off';
+      }
+      if (document.body && document.body.isContentEditable) {
+        document.body.contentEditable = 'false';
+      }
+    } catch(e) {}
+
+    // 2. Ensure selectbox inputs are read-only to prevent Android Chrome soft-keyboard / text carets
+    const selectInputs = document.querySelectorAll('div[data-baseweb="select"] input');
+    selectInputs.forEach(function(inp) {
+      if (!inp.readOnly) inp.readOnly = true;
+      if (inp.getAttribute('readonly') !== 'readonly') inp.setAttribute('readonly', 'readonly');
+      if (inp.getAttribute('inputmode') !== 'none') inp.setAttribute('inputmode', 'none');
+      if (inp.getAttribute('contenteditable') !== 'false') inp.setAttribute('contenteditable', 'false');
+
+      if (!inp._protectionAttached) {
+        inp._protectionAttached = true;
+        // Block text injection or backspacing while preserving navigation keys
+        inp.addEventListener('beforeinput', function(e) {
+          e.preventDefault();
+        });
+        inp.addEventListener('keydown', function(e) {
+          const allowed = ['Tab', 'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+          if (allowed.includes(e.key) || [9, 13, 27, 37, 38, 39, 40].includes(e.keyCode)) {
+            return;
+          }
+          e.preventDefault();
+        });
+        inp.addEventListener('touchstart', function(e) {
+          this.readOnly = true;
+          this.setAttribute('inputmode', 'none');
+        }, { passive: true });
+      }
+    });
+
+    // 3. Ensure dashboard cards, headings, and static metrics remain strictly read-only
+    const staticContainers = document.querySelectorAll(
+      '.med-header, .med-card, .med-overall-panel, .med-metric-row, .med-score-box, ' +
+      '.med-breakdown-box, .med-rationale-note, [data-testid="stMarkdownContainer"], ' +
+      '[data-testid="stText"], [data-testid="stMetric"]'
+    );
+    staticContainers.forEach(function(el) {
+      if (el.getAttribute('contenteditable') !== 'false') {
+        el.setAttribute('contenteditable', 'false');
+      }
+      if (el.isContentEditable) {
+        el.contentEditable = 'false';
+      }
+    });
+  }
+
+  enforceReadOnly();
+  if (!window._medObserverAttached) {
+    window._medObserverAttached = true;
+    const observer = new MutationObserver(function() {
+      enforceReadOnly();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+})();
+</script>"""
+    st.html(protection_js, unsafe_allow_javascript=True)
+
+inject_mobile_protections()
 
 # Load HTML Presentation Templates from app/templates/dashboard.html
 def get_template(block_name: str) -> str:
@@ -155,6 +235,12 @@ if "location_res" not in st.session_state:
     st.session_state["location_res"] = None
 if "location_score" not in st.session_state:
     st.session_state["location_score"] = None
+if "location_is_cached" not in st.session_state:
+    st.session_state["location_is_cached"] = False
+if "gps_error_msg" not in st.session_state:
+    st.session_state["gps_error_msg"] = None
+if "gps_force_trigger" not in st.session_state:
+    st.session_state["gps_force_trigger"] = 0
 if "env_score" not in st.session_state:
     st.session_state["env_score"] = 0.10
 if "analyzed_threat" not in st.session_state:
@@ -235,58 +321,60 @@ with tab1:
   <span class="med-card-subtitle">Browser Geolocation</span>
 </div>""")
         
-        # Render browser geolocation listener component
-        loc_payload = get_geolocation(component_key=f"live_browser_gps_{st.session_state['gps_query_counter']}")
-
-        if loc_payload and isinstance(loc_payload, dict) and "coords" in loc_payload:
-            coords = loc_payload["coords"]
-            r_lat = float(coords["latitude"])
-            r_lon = float(coords["longitude"])
-            r_acc = float(coords.get("accuracy", 10.0))
-            r_ts = loc_payload.get("timestamp")
-
-            print(f"[DEBUG LIVE GPS] Received browser coordinates: lat={r_lat:.6f}, lon={r_lon:.6f}, accuracy={r_acc}m, timestamp={r_ts}", flush=True)
-
-            analysis_res = campus_analyzer.analyze_gps(
-                lat=r_lat,
-                lon=r_lon,
-                accuracy=r_acc,
-                timestamp=r_ts,
-                time_of_day_hour=datetime.datetime.now().hour
+        # Render custom reliable GPS sensor component
+        if gps_sensor is not None:
+            gps_payload = gps_sensor(
+                key="live_gps_sensor",
+                force_request_id=st.session_state.get("gps_force_trigger", 0),
+                initial_status=st.session_state.get("gps_status", "OFF")
             )
-
-            st.session_state["gps_status"] = analysis_res["status"]
-            st.session_state["location_res"] = analysis_res
-            st.session_state["location_score"] = analysis_res["location_risk_score"]
-
-            if st.session_state.get("analyzed_threat") is not None:
-                st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                    physiological_stress_score=st.session_state["physio_score"],
-                    location_risk_score=st.session_state["location_score"],
-                    environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50
-                )
-        elif loc_payload and isinstance(loc_payload, dict) and "error" in loc_payload:
-            print(f"[DEBUG LIVE GPS] Browser GPS Error Payload: {loc_payload['error']}", flush=True)
-            st.session_state["gps_status"] = "ERROR"
-            st.session_state["location_res"] = None
-            st.session_state["location_score"] = None
-
-        # Display GPS Status Pill
-        status_code = st.session_state["gps_status"]
-        if status_code in ["CONNECTED", "LIVE", "OK"]:
-            pill_html = "<span class='med-status-pill pill-connected'>GPS: CONNECTED</span>"
-        elif status_code == "LOW_ACCURACY":
-            pill_html = "<span class='med-status-pill pill-warn'>GPS: LOW ACCURACY</span>"
-        elif status_code == "ERROR":
-            pill_html = "<span class='med-status-pill pill-error'>GPS: ERROR</span>"
         else:
-            pill_html = "<span class='med-status-pill pill-off'>GPS: OFF</span>"
-            
-        st.html(f"<div style='margin-bottom: 10px;'>{pill_html}</div>")
+            gps_payload = None
 
-        if st.button("📍 [ Get Live Location ]", key="btn_trigger_gps", use_container_width=True):
-            st.session_state["gps_query_counter"] += 1
+        if gps_payload and isinstance(gps_payload, dict):
+            p_status = gps_payload.get("status")
+            if p_status == "SUCCESS" and "coords" in gps_payload:
+                coords = gps_payload["coords"]
+                r_lat = float(coords["latitude"])
+                r_lon = float(coords["longitude"])
+                r_acc = float(coords.get("accuracy", 10.0))
+                r_ts = gps_payload.get("timestamp")
+                is_cached = bool(gps_payload.get("is_cached", False))
+
+                analysis_res = campus_analyzer.analyze_gps(
+                    lat=r_lat,
+                    lon=r_lon,
+                    accuracy=r_acc,
+                    timestamp=r_ts,
+                    time_of_day_hour=datetime.datetime.now().hour
+                )
+
+                st.session_state["gps_status"] = analysis_res["status"]
+                st.session_state["location_res"] = analysis_res
+                st.session_state["location_score"] = analysis_res["location_risk_score"]
+                st.session_state["location_is_cached"] = is_cached
+                st.session_state["gps_error_msg"] = None
+
+                if st.session_state.get("analyzed_threat") is not None:
+                    st.session_state["analyzed_threat"] = predictor.predict_fusion(
+                        physiological_stress_score=st.session_state["physio_score"],
+                        location_risk_score=st.session_state["location_score"],
+                        environment_risk_score=st.session_state["env_score"],
+                        threshold=0.50
+                    )
+            elif p_status in ["PERMISSION_DENIED", "POSITION_UNAVAILABLE", "TIMEOUT", "ERROR", "NOT_SUPPORTED"]:
+                st.session_state["gps_status"] = p_status
+                st.session_state["location_res"] = None
+                st.session_state["location_score"] = None
+                st.session_state["gps_error_msg"] = gps_payload.get("message", "GPS acquisition failed.")
+
+        # Provide working Python Retry button if GPS encountered error/timeout
+        if st.session_state["gps_status"] in ["PERMISSION_DENIED", "POSITION_UNAVAILABLE", "TIMEOUT", "ERROR"]:
+            if st.button("🔄 [ Retry GPS Fix ]", key="btn_retry_gps", use_container_width=True):
+                st.session_state["gps_force_trigger"] += 1
+                st.session_state["gps_status"] = "OFF"
+                st.session_state["gps_error_msg"] = None
+                st.rerun()
 
         loc_res = st.session_state.get("location_res")
         has_valid_gps = (loc_res is not None and loc_res.get("nearest_landmark") is not None)
@@ -294,10 +382,16 @@ with tab1:
         if has_valid_gps:
             c_loc = loc_res["current_location"]
             n_lm = loc_res["nearest_landmark"]
+            acc_val = float(c_loc['accuracy_meters'])
             lat_disp = f"{c_loc['latitude']:.6f}"
             lon_disp = f"{c_loc['longitude']:.6f}"
-            acc_disp = f"±{int(c_loc['accuracy_meters'])} m"
-            near_lm_disp = n_lm["name"]
+            
+            is_low_acc = acc_val > 100.0
+            acc_note = " (⚠️ Low Accuracy)" if is_low_acc else ""
+            acc_disp = f"±{int(acc_val)} m{acc_note}"
+            
+            fix_freshness = "Cached Fix (Fresh)" if st.session_state.get("location_is_cached") else "Live GPS Fix"
+            near_lm_disp = f"{n_lm['name']} (Proximity Approximate)" if is_low_acc else n_lm["name"]
             dist_disp = f"{n_lm['distance_meters']} m"
             score_disp = f"{int(loc_res['location_risk_score'] * 100)}%"
             score_val = loc_res["location_risk_score"]
@@ -305,17 +399,30 @@ with tab1:
             lat_disp = "—"
             lon_disp = "—"
             acc_disp = "—"
+            fix_freshness = "—"
             near_lm_disp = "—"
             dist_disp = "—"
             score_disp = "—"
             score_val = 0.0
+            is_low_acc = False
 
         st.html(f"""<div style='margin-top: 10px;'>
   <div class='med-metric-row'><span class='med-metric-label'>Latitude</span> <span class='med-metric-value'>{lat_disp}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Longitude</span> <span class='med-metric-value'>{lon_disp}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Accuracy</span> <span class='med-metric-value'>{acc_disp}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Fix Freshness</span> <span class='med-metric-value'>{fix_freshness}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Nearest Landmark</span> <span class='med-metric-value med-metric-value-accent'>{near_lm_disp}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Distance</span> <span class='med-metric-value'>{dist_disp}</span></div>
+</div>""")
+
+        if has_valid_gps and is_low_acc:
+            st.html(f"""<div class='med-alert-warn'>
+⚠️ Reported accuracy is ±{int(acc_val)}m. The nearest campus landmark is approximate and subject to GPS drift.
+</div>""")
+
+        if st.session_state.get("gps_error_msg"):
+            st.html(f"""<div class='med-alert-error'>
+⚠️ {st.session_state["gps_error_msg"]}
 </div>""")
 
         badge_cls = "score-danger" if score_val > 0.65 else ("score-warn" if score_val > 0.35 else "score-safe")
