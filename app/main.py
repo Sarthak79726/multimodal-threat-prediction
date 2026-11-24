@@ -33,6 +33,7 @@ elif sys.path[0] != _project_root:
 import config
 from src.fusion.predict import MultimodalThreatPredictor
 from src.location.campus_map import CampusMapAnalyzer
+from src.location.landmarks import get_all_landmarks_list
 from src.environment.model import SUPPORTED_LOCATIONS
 from src.physiological.preprocessing import load_subject_data
 from src.physiological.feature_extraction import extract_window_features
@@ -328,6 +329,15 @@ def load_predictor(version: str = "v2.2_defensive_env"):
 predictor = load_predictor()
 campus_analyzer = CampusMapAnalyzer()
 
+def get_landmark_by_name(name: str):
+    if not name:
+        return None
+    clean = str(name).strip().lower()
+    for lm in get_all_landmarks_list():
+        if lm["name"].strip().lower() == clean or lm["id"].strip().lower() == clean:
+            return lm
+    return None
+
 # Initialize Session State Variables
 if "physio_score" not in st.session_state:
     st.session_state["physio_score"] = 0.20
@@ -337,6 +347,18 @@ if "location_res" not in st.session_state:
     st.session_state["location_res"] = None
 if "location_score" not in st.session_state:
     st.session_state["location_score"] = None
+if "gps_raw_res" not in st.session_state:
+    st.session_state["gps_raw_res"] = None
+if "gps_detected_landmark" not in st.session_state:
+    st.session_state["gps_detected_landmark"] = None
+if "cb_manual_env_override" not in st.session_state:
+    st.session_state["cb_manual_env_override"] = False
+if "sel_manual_env_loc" not in st.session_state:
+    st.session_state["sel_manual_env_loc"] = None
+if "effective_location_name" not in st.session_state:
+    st.session_state["effective_location_name"] = None
+if "location_mode" not in st.session_state:
+    st.session_state["location_mode"] = "INITIALIZING"
 if "location_is_cached" not in st.session_state:
     st.session_state["location_is_cached"] = False
 if "gps_error_msg" not in st.session_state:
@@ -447,6 +469,9 @@ with tab1:
         else:
             gps_payload = None
 
+        now_campus = config.get_campus_now()
+        calc_hour = st.session_state.get("client_hour") or (now_campus.hour + now_campus.minute / 60.0)
+
         if gps_payload and isinstance(gps_payload, dict):
             p_status = gps_payload.get("status")
             if "client_hour" in gps_payload and gps_payload["client_hour"] is not None:
@@ -462,10 +487,7 @@ with tab1:
                 r_ts = gps_payload.get("timestamp")
                 is_cached = bool(gps_payload.get("is_cached", False))
 
-                now_campus = config.get_campus_now()
-                calc_hour = st.session_state.get("client_hour") or (now_campus.hour + now_campus.minute / 60.0)
-
-                analysis_res = campus_analyzer.analyze_gps(
+                raw_gps_analysis = campus_analyzer.analyze_gps(
                     lat=r_lat,
                     lon=r_lon,
                     accuracy=r_acc,
@@ -473,24 +495,15 @@ with tab1:
                     time_of_day_hour=calc_hour
                 )
 
-                st.session_state["gps_status"] = analysis_res["status"]
-                st.session_state["location_res"] = analysis_res
-                st.session_state["location_score"] = analysis_res["location_risk_score"]
+                st.session_state["gps_status"] = raw_gps_analysis["status"]
+                st.session_state["gps_raw_res"] = raw_gps_analysis
+                st.session_state["gps_detected_landmark"] = raw_gps_analysis["nearest_landmark"]["name"] if raw_gps_analysis.get("nearest_landmark") else None
                 st.session_state["location_is_cached"] = is_cached
                 st.session_state["gps_error_msg"] = None
-
-                if st.session_state.get("analyzed_threat") is not None:
-                    loc_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
-                    st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                        physiological_stress_score=st.session_state["physio_score"],
-                        location_risk_score=loc_val,
-                        environment_risk_score=st.session_state["env_score"],
-                        threshold=0.50
-                    )
             elif p_status in ["PERMISSION_DENIED", "POSITION_UNAVAILABLE", "TIMEOUT", "ERROR", "NOT_SUPPORTED"]:
                 st.session_state["gps_status"] = p_status
-                st.session_state["location_res"] = None
-                st.session_state["location_score"] = None
+                st.session_state["gps_raw_res"] = None
+                st.session_state["gps_detected_landmark"] = None
                 st.session_state["gps_error_msg"] = gps_payload.get("message", "GPS acquisition failed.")
 
         # Provide working Python Retry button if GPS encountered error/timeout
@@ -501,24 +514,82 @@ with tab1:
                 st.session_state["gps_error_msg"] = None
                 st.rerun()
 
-        loc_res = st.session_state.get("location_res")
-        has_valid_gps = (loc_res is not None and loc_res.get("nearest_landmark") is not None)
+        # Authoritative Location Priority:
+        # effective_location = manual_override_location if manual_override_enabled else gps_detected_location
+        is_manual_override = bool(st.session_state.get("cb_manual_env_override", False))
+        selected_manual_loc = st.session_state.get("sel_manual_env_loc")
+        raw_gps_res = st.session_state.get("gps_raw_res")
+        has_raw_gps = (raw_gps_res is not None and raw_gps_res.get("nearest_landmark") is not None)
+        gps_detected_name = raw_gps_res["nearest_landmark"]["name"] if has_raw_gps else None
 
-        if has_valid_gps:
+        if is_manual_override and selected_manual_loc in SUPPORTED_LOCATIONS:
+            effective_location_name = selected_manual_loc
+            effective_source = "Manual Override"
+        elif has_raw_gps and gps_detected_name:
+            effective_location_name = gps_detected_name
+            effective_source = "Live GPS Resolved"
+        elif st.session_state.get("sel_ambig_env_loc") in SUPPORTED_LOCATIONS:
+            effective_location_name = st.session_state["sel_ambig_env_loc"]
+            effective_source = "Manual Confirmation (Ambiguous GPS)"
+        elif st.session_state.get("sel_outside_env_loc") in SUPPORTED_LOCATIONS:
+            effective_location_name = st.session_state["sel_outside_env_loc"]
+            effective_source = "Manual Selection (Outside Geofence)"
+        elif st.session_state.get("sel_manual_env_loc_fallback") in SUPPORTED_LOCATIONS:
+            effective_location_name = st.session_state["sel_manual_env_loc_fallback"]
+            effective_source = "Manual Selection (GPS Unavailable)"
+        else:
+            effective_location_name = SUPPORTED_LOCATIONS[0]
+            effective_source = "Default / Fallback"
+
+        # Calculate spatial analysis for the authoritative effective location
+        if effective_source == "Live GPS Resolved" and has_raw_gps:
+            effective_loc_res = raw_gps_res
+        else:
+            target_lm = get_landmark_by_name(effective_location_name)
+            if target_lm is not None:
+                effective_loc_res = campus_analyzer.analyze_gps(
+                    lat=float(target_lm["latitude"]),
+                    lon=float(target_lm["longitude"]),
+                    accuracy=5.0,
+                    time_of_day_hour=calc_hour
+                )
+            else:
+                effective_loc_res = raw_gps_res
+
+        # Commit authoritative location into session state for all downstream modules
+        st.session_state["location_res"] = effective_loc_res
+        st.session_state["location_score"] = effective_loc_res["location_risk_score"] if effective_loc_res else None
+        st.session_state["effective_location_name"] = effective_location_name
+        st.session_state["location_mode"] = effective_source
+
+        loc_res = st.session_state.get("location_res")
+        has_display_loc = (loc_res is not None and loc_res.get("nearest_landmark") is not None)
+
+        if is_manual_override and selected_manual_loc:
+            st.html(f"""<div class='med-alert-warn' style='margin-bottom:8px; font-size:0.78rem; padding:6px 10px;'>
+⚙️ <strong>MANUAL OVERRIDE ACTIVE:</strong> Live GPS fix is overridden. Spatial risk evaluated for: <strong>{effective_location_name}</strong>.
+</div>""")
+
+        if has_display_loc:
             c_loc = loc_res["current_location"]
             n_lm = loc_res["nearest_landmark"]
-            acc_val = float(c_loc['accuracy_meters'])
+            acc_val = float(c_loc.get('accuracy_meters', 10.0))
             lat_disp = f"{c_loc['latitude']:.6f}"
             lon_disp = f"{c_loc['longitude']:.6f}"
 
-            is_low_acc = acc_val > 100.0
+            is_low_acc = (acc_val > 100.0) and (not is_manual_override)
             acc_note = " (⚠️ Low Accuracy)" if is_low_acc else ""
-            acc_disp = f"±{int(acc_val)} m{acc_note}"
+            acc_disp = f"±{int(acc_val)} m{acc_note}" if not is_manual_override else "Manual Target (±5m)"
 
-            fix_freshness = "Cached Fix (Fresh)" if st.session_state.get("location_is_cached") else "Live GPS Fix"
-            near_lm_disp = f"{n_lm['name']} (Proximity Approximate)" if is_low_acc else n_lm["name"]
+            if is_manual_override:
+                fix_freshness = "Manual Landmark Target"
+                near_lm_disp = f"{effective_location_name} (Manual Override)"
+            else:
+                fix_freshness = "Cached Fix (Fresh)" if st.session_state.get("location_is_cached") else "Live GPS Fix"
+                near_lm_disp = f"{n_lm['name']} (Proximity Approximate)" if is_low_acc else n_lm["name"]
+
             dist_disp = f"{n_lm['distance_meters']} m"
-            score_disp = f"{int(loc_res['location_risk_score'] * 100)}%"
+            score_disp = f"{int(round(loc_res['location_risk_score'] * 100))}%"
             score_val = loc_res["location_risk_score"]
         else:
             lat_disp = "—"
@@ -540,7 +611,7 @@ with tab1:
   <div class='med-metric-row'><span class='med-metric-label'>Distance</span> <span class='med-metric-value'>{dist_disp}</span></div>
 </div>""")
 
-        if has_valid_gps and is_low_acc:
+        if has_display_loc and is_low_acc:
             st.html(f"""<div class='med-alert-warn'>
 ⚠️ Reported accuracy is ±{int(acc_val)}m. The nearest campus landmark is approximate and subject to GPS drift.
 </div>""")
@@ -584,13 +655,13 @@ with tab1:
         wknd_tag = "Weekend" if is_wknd else "Weekday"
 
         # 2. Location Resolution (GPS vs Ambiguity vs Manual Fallback)
-        loc_res = st.session_state.get("location_res")
-        has_gps_landmark = (loc_res is not None and loc_res.get("nearest_landmark") is not None)
-        gps_resolved_name = loc_res["nearest_landmark"]["name"] if has_gps_landmark else None
+        raw_gps_res = st.session_state.get("gps_raw_res")
+        has_raw_gps = (raw_gps_res is not None and raw_gps_res.get("nearest_landmark") is not None)
+        raw_gps_name = raw_gps_res["nearest_landmark"]["name"] if has_raw_gps else None
 
         gps_resolve_info = None
-        if loc_res is not None and loc_res.get("current_location") is not None:
-            c_loc = loc_res["current_location"]
+        if has_raw_gps and raw_gps_res.get("current_location") is not None:
+            c_loc = raw_gps_res["current_location"]
             r_lat = c_loc.get("latitude")
             r_lon = c_loc.get("longitude")
             r_acc = c_loc.get("accuracy_meters")
@@ -645,29 +716,50 @@ with tab1:
             active_env_location = st.selectbox("Campus Landmark (Manual Fallback)", SUPPORTED_LOCATIONS, index=0, key="sel_outside_env_loc")
             loc_origin = "Manual Selection (Outside Geofence)"
 
-        elif has_gps_landmark and gps_resolve_info is not None and gps_resolve_info.get("status") == "RESOLVED_GPS":
-            resolved_gps_loc = gps_resolve_info.get("resolved_location") or gps_resolved_name
-            use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=False, key="cb_manual_env_override")
+        elif has_raw_gps and gps_resolve_info is not None and gps_resolve_info.get("status") == "RESOLVED_GPS":
+            resolved_gps_loc = gps_resolve_info.get("resolved_location") or raw_gps_name
+            use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=is_manual_override, key="cb_manual_env_override")
             if use_manual_loc:
-                default_idx = SUPPORTED_LOCATIONS.index(resolved_gps_loc) if resolved_gps_loc in SUPPORTED_LOCATIONS else 0
+                default_sel = selected_manual_loc if (selected_manual_loc in SUPPORTED_LOCATIONS) else resolved_gps_loc
+                default_idx = SUPPORTED_LOCATIONS.index(default_sel) if default_sel in SUPPORTED_LOCATIONS else 0
                 active_env_location = st.selectbox("Campus Landmark (Manual Override)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_manual_env_loc")
                 loc_origin = "Manual Selection (Override)"
             else:
                 active_env_location = resolved_gps_loc
                 loc_origin = "Live GPS Resolved"
-        elif has_gps_landmark:
-            use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=False, key="cb_manual_env_override")
+        elif has_raw_gps:
+            use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=is_manual_override, key="cb_manual_env_override")
             if use_manual_loc:
-                default_idx = SUPPORTED_LOCATIONS.index(gps_resolved_name) if gps_resolved_name in SUPPORTED_LOCATIONS else 0
+                default_sel = selected_manual_loc if (selected_manual_loc in SUPPORTED_LOCATIONS) else raw_gps_name
+                default_idx = SUPPORTED_LOCATIONS.index(default_sel) if default_sel in SUPPORTED_LOCATIONS else 0
                 active_env_location = st.selectbox("Campus Landmark (Manual Override)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_manual_env_loc")
                 loc_origin = "Manual Selection (Override)"
             else:
-                active_env_location = gps_resolved_name
+                active_env_location = raw_gps_name
                 loc_origin = "Live GPS Resolved"
         else:
             st.caption("📍 GPS unavailable or manual mode. Select campus location:")
-            active_env_location = st.selectbox("Campus Landmark (Manual Fallback)", SUPPORTED_LOCATIONS, index=0, key="sel_manual_env_loc_fallback")
+            default_sel = selected_manual_loc if (selected_manual_loc in SUPPORTED_LOCATIONS) else SUPPORTED_LOCATIONS[0]
+            default_idx = SUPPORTED_LOCATIONS.index(default_sel) if default_sel in SUPPORTED_LOCATIONS else 0
+            active_env_location = st.selectbox("Campus Landmark (Manual Fallback)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_manual_env_loc_fallback")
             loc_origin = "Manual Selection (GPS Unavailable)"
+
+        # Immediately synchronize authoritative location state if widget selection changed
+        if active_env_location != effective_location_name or loc_origin != effective_source:
+            effective_location_name = active_env_location
+            effective_source = loc_origin
+            target_lm = get_landmark_by_name(effective_location_name)
+            if target_lm is not None:
+                effective_loc_res = campus_analyzer.analyze_gps(
+                    lat=float(target_lm["latitude"]),
+                    lon=float(target_lm["longitude"]),
+                    accuracy=5.0,
+                    time_of_day_hour=calc_hour
+                )
+                st.session_state["location_res"] = effective_loc_res
+                st.session_state["location_score"] = effective_loc_res["location_risk_score"]
+                st.session_state["effective_location_name"] = effective_location_name
+                st.session_state["location_mode"] = effective_source
 
         # 3. Automatic AI Environmental Inference
         try:
@@ -810,6 +902,51 @@ with tab1:
         st.html(f"""<div class="med-score-box">
   <div class="med-score-label">{score_lbl}</div>
   {score_inner}
+</div>""")
+
+    # -------------------------------------------------------------------------
+    # LOCATION PIPELINE DIAGNOSTICS & AUDIT CONTAINER
+    # -------------------------------------------------------------------------
+    raw_gps_res_data = st.session_state.get("gps_raw_res")
+    has_raw_gps_data = (raw_gps_res_data is not None and raw_gps_res_data.get("nearest_landmark") is not None)
+    if has_raw_gps_data:
+        raw_lm_name = raw_gps_res_data["nearest_landmark"]["name"]
+        raw_c = raw_gps_res_data.get("current_location", {})
+        raw_gps_disp = f"{raw_lm_name} ({raw_c.get('latitude', 0.0):.5f}, {raw_c.get('longitude', 0.0):.5f})"
+    else:
+        raw_gps_disp = "No Active GPS Fix"
+
+    is_override_active = bool(st.session_state.get("cb_manual_env_override", False))
+    override_status_badge = "<span style='color:#ff9800; font-weight:700;'>ENABLED (Manual Override Active)</span>" if is_override_active else "<span style='color:#4caf50; font-weight:700;'>DISABLED (Live GPS Priority)</span>"
+    sel_manual_disp = st.session_state.get("sel_manual_env_loc") if (is_override_active and st.session_state.get("sel_manual_env_loc")) else "None (GPS Default)"
+    eff_loc_disp = st.session_state.get("effective_location_name") or "—"
+
+    cur_loc_res = st.session_state.get("location_res")
+    if cur_loc_res and cur_loc_res.get("current_location"):
+        eff_c = cur_loc_res["current_location"]
+        eff_coords_disp = f"{eff_c.get('latitude', 0.0):.5f}, {eff_c.get('longitude', 0.0):.5f}"
+    else:
+        eff_coords_disp = "—"
+
+    eff_spatial_score_disp = f"{int(round(st.session_state['location_score'] * 100))}%" if st.session_state.get("location_score") is not None else "Unavailable"
+    eff_env_score_disp = f"{int(round(st.session_state['env_score'] * 100))}%" if st.session_state.get("env_score") is not None else "Unavailable"
+    auth_source_disp = st.session_state.get("location_mode", "—")
+
+    st.html(f"""<div style='background:rgba(18, 24, 38, 0.75); border:1px solid rgba(0, 188, 212, 0.25); border-radius:8px; padding:10px 14px; margin:14px 0;'>
+  <div style='font-size:0.78rem; font-weight:700; color:#00bcd4; letter-spacing:0.5px; margin-bottom:8px; display:flex; justify-content:space-between; flex-wrap:wrap;'>
+    <span>📍 LOCATION RESOLUTION & MULTIMODAL PIPELINE AUDIT</span>
+    <span style='font-weight:400; color:#888;'>Authoritative Source: <strong style='color:#64b5f6;'>{auth_source_disp}</strong></span>
+  </div>
+  <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:6px 16px; font-size:0.76rem;'>
+    <div><span style='color:#888;'>GPS Hardware Location:</span> <strong style='color:#e0e0e0;'>{raw_gps_disp}</strong></div>
+    <div><span style='color:#888;'>Manual Override:</span> {override_status_badge}</div>
+    <div><span style='color:#888;'>Selected Manual Landmark:</span> <strong style='color:#e0e0e0;'>{sel_manual_disp}</strong></div>
+    <div><span style='color:#888;'>Effective Analysis Landmark:</span> <strong style='color:#00bcd4;'>{eff_loc_disp}</strong></div>
+    <div><span style='color:#888;'>Effective Landmark Coords:</span> <strong style='color:#e0e0e0;'>{eff_coords_disp}</strong></div>
+    <div><span style='color:#888;'>Spatial Risk Score (L):</span> <strong style='color:#ffb74d;'>{eff_spatial_score_disp}</strong></div>
+    <div><span style='color:#888;'>Environmental Risk Score (E):</span> <strong style='color:#81c784;'>{eff_env_score_disp}</strong></div>
+    <div><span style='color:#888;'>Active Authority:</span> <strong style='color:#64b5f6;'>{auth_source_disp}</strong></div>
+  </div>
 </div>""")
 
     st.html("<br>")
