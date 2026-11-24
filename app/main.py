@@ -634,12 +634,15 @@ with tab1:
         # Auto-update threat fusion if previously analyzed
         if st.session_state.get("analyzed_threat") is not None:
             loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
-            st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                physiological_stress_score=st.session_state["physio_score"],
-                location_risk_score=loc_score_val,
-                environment_risk_score=st.session_state["env_score"],
-                threshold=0.50
-            )
+            try:
+                st.session_state["analyzed_threat"] = predictor.predict_fusion(
+                    physiological_stress_score=st.session_state["physio_score"],
+                    location_risk_score=loc_score_val,
+                    environment_risk_score=st.session_state["env_score"],
+                    threshold=0.50
+                )
+            except Exception as e:
+                print(f"[app/main.py] Warning: Auto-update fusion failed: {e}", flush=True)
 
         env_pct = int(round(st.session_state["env_score"] * 100))
         env_badge_cls = "score-danger" if env_pct > 65 else ("score-warn" if env_pct > 35 else "score-safe")
@@ -654,17 +657,23 @@ with tab1:
     with col_center:
         if st.button("🛡️ EVALUATE OVERALL CONTEXT RISK", key="btn_main_threat", use_container_width=True):
             loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
-            res = predictor.predict_fusion(
-                physiological_stress_score=st.session_state["physio_score"],
-                location_risk_score=loc_score_val,
-                environment_risk_score=st.session_state["env_score"],
-                threshold=0.50
-            )
-            st.session_state["analyzed_threat"] = res
+            try:
+                res = predictor.predict_fusion(
+                    physiological_stress_score=st.session_state["physio_score"],
+                    location_risk_score=loc_score_val,
+                    environment_risk_score=st.session_state["env_score"],
+                    threshold=0.50
+                )
+                st.session_state["analyzed_threat"] = res
+            except Exception as e:
+                st.error(f"Fusion Model Evaluation Error: {e}")
 
     # SECTION 4: OVERALL RISK ASSESSMENT PANEL
-    if st.session_state["analyzed_threat"] is not None:
-        render_overall_risk_panel(st.session_state["analyzed_threat"])
+    if st.session_state.get("analyzed_threat") is not None:
+        try:
+            render_overall_risk_panel(st.session_state["analyzed_threat"])
+        except Exception as e:
+            st.error(f"Error rendering overall context assessment: {e}")
 
 # =============================================================================
 # TAB 2: BIT MESRA CAMPUS GPS & SPATIAL ANALYZER
