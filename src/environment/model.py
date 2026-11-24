@@ -136,13 +136,15 @@ class EnvironmentalContextEngine:
         lat: Optional[float] = None,
         lon: Optional[float] = None,
         max_geofence_meters: float = 350.0,
-        accuracy: Optional[float] = None
+        accuracy: Optional[float] = None,
+        **kwargs: Any
     ) -> Dict[str, Any]:
         """
         Resolves GPS coordinates against BIT Mesra campus landmarks.
         Includes geofence enforcement (max_geofence_meters) and ambiguity detection:
         If coordinates are equidistant between multiple landmarks or within GPS accuracy margin,
         flags status as AMBIGUOUS_LOCATION and requires manual user confirmation.
+        Defensively handles variable types and unexpected kwargs without raising TypeError.
         """
         if lat is None or lon is None:
             return {
@@ -152,6 +154,19 @@ class EnvironmentalContextEngine:
                 "is_within_geofence": False,
                 "ambiguous_candidates": [],
                 "message": "GPS coordinates not available. Manual campus location selection required."
+            }
+
+        try:
+            lat_f = float(lat)
+            lon_f = float(lon)
+        except (ValueError, TypeError):
+            return {
+                "status": "GPS_UNAVAILABLE",
+                "resolved_location": None,
+                "distance_meters": None,
+                "is_within_geofence": False,
+                "ambiguous_candidates": [],
+                "message": "GPS coordinates could not be parsed as numeric floats."
             }
 
         if not self.landmarks:
@@ -164,66 +179,84 @@ class EnvironmentalContextEngine:
                 "message": "No campus landmarks configured."
             }
 
-        # Calculate distance to all known campus landmarks and sort
-        dist_list = []
-        for lm in self.landmarks:
-            dist = haversine_distance(lat, lon, lm["latitude"], lm["longitude"])
-            dist_list.append((lm, dist))
+        try:
+            effective_threshold = float(max_geofence_meters)
+        except (ValueError, TypeError):
+            effective_threshold = 350.0
 
-        dist_list.sort(key=lambda x: x[1])
-        nearest_landmark, min_dist = dist_list[0]
-        effective_threshold = float(max_geofence_meters)
+        try:
+            acc_val = float(accuracy) if accuracy is not None and float(accuracy) > 0 else 0.0
+        except (ValueError, TypeError):
+            acc_val = 0.0
 
-        # Geofence check
-        if min_dist > effective_threshold:
+        try:
+            # Calculate distance to all known campus landmarks and sort
+            dist_list = []
+            for lm in self.landmarks:
+                dist = haversine_distance(lat_f, lon_f, lm["latitude"], lm["longitude"])
+                dist_list.append((lm, dist))
+
+            dist_list.sort(key=lambda x: x[1])
+            nearest_landmark, min_dist = dist_list[0]
+
+            # Geofence check
+            if min_dist > effective_threshold:
+                return {
+                    "status": "OUTSIDE_CAMPUS_GEOFENCE",
+                    "resolved_location": None,
+                    "nearest_landmark_candidate": nearest_landmark["name"],
+                    "distance_meters": round(min_dist, 1),
+                    "is_within_geofence": False,
+                    "ambiguous_candidates": [],
+                    "message": f"Coordinates are {int(min_dist)}m from campus ({nearest_landmark['name']}), exceeding supported geofence ({int(effective_threshold)}m). Manual location required."
+                }
+
+            # Ambiguity check: if within accuracy margin or landmark proximity margin
+            ambiguity_margin = max(acc_val, 30.0)
+
+            ambiguous_candidates = [
+                lm["name"] for lm, d in dist_list
+                if d <= effective_threshold and (d - min_dist) <= ambiguity_margin
+            ]
+
+            if len(ambiguous_candidates) > 1:
+                return {
+                    "status": "AMBIGUOUS_LOCATION",
+                    "resolved_location": None,
+                    "nearest_landmark_candidate": nearest_landmark["name"],
+                    "ambiguous_candidates": ambiguous_candidates,
+                    "distance_meters": round(min_dist, 1),
+                    "is_within_geofence": True,
+                    "accuracy_margin_m": round(ambiguity_margin, 1),
+                    "message": f"Ambiguous location: coordinates are within accuracy margin ({int(ambiguity_margin)}m) between {', '.join(ambiguous_candidates[:3])}. Manual confirmation required."
+                }
+
+            # Unambiguous match within geofence
+            matched_name = nearest_landmark["name"]
+            for sup in SUPPORTED_LOCATIONS:
+                if sup.lower() == matched_name.lower():
+                    matched_name = sup
+                    break
+
             return {
-                "status": "OUTSIDE_CAMPUS_GEOFENCE",
-                "resolved_location": None,
-                "nearest_landmark_candidate": nearest_landmark["name"],
-                "distance_meters": round(min_dist, 1),
-                "is_within_geofence": False,
-                "ambiguous_candidates": [],
-                "message": f"Coordinates are {int(min_dist)}m from campus ({nearest_landmark['name']}), exceeding supported geofence ({int(effective_threshold)}m). Manual location required."
-            }
-
-        # Ambiguity check: if within accuracy margin or landmark proximity margin
-        # Several BIT Mesra landmarks are < 65m apart (e.g. R&D to H2 is 23.1m, H3 to PMC is 48.7m)
-        acc_val = float(accuracy) if accuracy is not None and accuracy > 0 else 0.0
-        ambiguity_margin = max(acc_val, 30.0)
-
-        ambiguous_candidates = [
-            lm["name"] for lm, d in dist_list
-            if d <= effective_threshold and (d - min_dist) <= ambiguity_margin
-        ]
-
-        if len(ambiguous_candidates) > 1:
-            return {
-                "status": "AMBIGUOUS_LOCATION",
-                "resolved_location": None,
-                "nearest_landmark_candidate": nearest_landmark["name"],
-                "ambiguous_candidates": ambiguous_candidates,
+                "status": "RESOLVED_GPS",
+                "resolved_location": matched_name,
+                "landmark_id": nearest_landmark["id"],
                 "distance_meters": round(min_dist, 1),
                 "is_within_geofence": True,
-                "accuracy_margin_m": round(ambiguity_margin, 1),
-                "message": f"Ambiguous location: coordinates are within accuracy margin ({int(ambiguity_margin)}m) between {', '.join(ambiguous_candidates[:3])}. Manual confirmation required."
+                "ambiguous_candidates": [],
+                "message": f"Successfully resolved to '{matched_name}' ({int(min_dist)}m from center)."
             }
-
-        # Unambiguous match within geofence
-        matched_name = nearest_landmark["name"]
-        for sup in SUPPORTED_LOCATIONS:
-            if sup.lower() == matched_name.lower():
-                matched_name = sup
-                break
-
-        return {
-            "status": "RESOLVED_GPS",
-            "resolved_location": matched_name,
-            "landmark_id": nearest_landmark["id"],
-            "distance_meters": round(min_dist, 1),
-            "is_within_geofence": True,
-            "ambiguous_candidates": [],
-            "message": f"Successfully resolved to '{matched_name}' ({int(min_dist)}m from center)."
-        }
+        except Exception as e:
+            logger.error("resolve_campus_location encountered unexpected error: %s", str(e), exc_info=True)
+            return {
+                "status": "ERROR",
+                "resolved_location": None,
+                "distance_meters": None,
+                "is_within_geofence": False,
+                "ambiguous_candidates": [],
+                "message": f"Campus location resolution error: {str(e)}"
+            }
 
     def predict_environment(
         self,

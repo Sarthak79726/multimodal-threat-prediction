@@ -8,9 +8,14 @@ Unit and Regression Test Suite for Version 1.0 Scientific & Technical Audit Corr
 6. Gated Production Inference: Stacking meta-learner remains strictly gated and untrained.
 """
 
+import sys
 import unittest
 import numpy as np
 from pathlib import Path
+
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 import config
 from src.environment.model import EnvironmentalContextEngine, SUPPORTED_LOCATIONS
@@ -189,6 +194,53 @@ class TestAuditV1Corrections(unittest.TestCase):
         self.assertFalse(res["is_meta_learner_trained"])
         self.assertEqual(res["meta_model_status"], "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED")
         self.assertIsNone(res["stacking_meta_probability"])
+
+    # =========================================================================
+    # 7. RESOLVE_CAMPUS_LOCATION RESILIENCE & TYPE ERROR PREVENTION
+    # =========================================================================
+    def test_resolve_campus_location_defensive_types_and_kwargs(self):
+        """Verifies resolve_campus_location never raises TypeError on string coords or unexpected kwargs."""
+        # Unexpected kwargs
+        res = self.engine.resolve_campus_location(
+            lat=23.4123,
+            lon=85.4399,
+            max_geofence_meters=350.0,
+            accuracy=10.0,
+            unexpected_arg="should_not_crash",
+            another_param=123
+        )
+        self.assertIn("status", res)
+
+        # String numeric coords
+        res_str = self.engine.resolve_campus_location(
+            lat="23.4123",
+            lon="85.4399",
+            accuracy="15.0"
+        )
+        self.assertIn("status", res_str)
+
+        # Predictor delegation
+        res_pred = self.predictor.resolve_campus_location(
+            lat=23.4123,
+            lon=85.4399,
+            accuracy=10.0
+        )
+        self.assertIn("status", res_pred)
+
+    def test_app_main_line_594_location_resolution_without_type_error(self):
+        """Verifies line 594 in app/main.py runs without TypeError when location_res is in session state."""
+        from streamlit.testing.v1 import AppTest
+        from src.location.campus_map import CampusMapAnalyzer
+        analyzer = CampusMapAnalyzer()
+
+        at = AppTest.from_file(str(Path(_project_root) / "app" / "main.py"))
+        at.run(timeout=30)
+        self.assertEqual(len(at.exception), 0)
+
+        # Simulate real GPS location in session_state
+        at.session_state["location_res"] = analyzer.analyze_gps(23.4123, 85.4399, accuracy=12.0)
+        at.run(timeout=30)
+        self.assertEqual(len(at.exception), 0, f"App encountered exception at line 594: {at.exception}")
 
 if __name__ == "__main__":
     unittest.main()

@@ -117,6 +117,48 @@ class MultimodalThreatPredictor:
                 pass
         return config.get_current_ist_time()
 
+    def resolve_campus_location(
+        self,
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
+        max_geofence_meters: float = 350.0,
+        accuracy: Optional[float] = None,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        """
+        Public delegate for resolving GPS coordinates against BIT Mesra campus landmarks.
+        Safely attempts to use self.env_engine, handling legacy method signatures defensively.
+        """
+        if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "resolve_campus_location"):
+            try:
+                return self.env_engine.resolve_campus_location(
+                    lat=lat,
+                    lon=lon,
+                    max_geofence_meters=max_geofence_meters,
+                    accuracy=accuracy,
+                    **kwargs
+                )
+            except TypeError:
+                try:
+                    return self.env_engine.resolve_campus_location(
+                        lat=lat,
+                        lon=lon,
+                        max_geofence_meters=max_geofence_meters
+                    )
+                except Exception as e:
+                    logger.warning("Delegated resolve_campus_location failed: %s", e)
+            except Exception as e:
+                logger.warning("Delegated resolve_campus_location failed: %s", e)
+
+        return {
+            "status": "GPS_UNAVAILABLE",
+            "resolved_location": None,
+            "distance_meters": None,
+            "is_within_geofence": False,
+            "ambiguous_candidates": [],
+            "message": "Campus location resolver unavailable."
+        }
+
     def predict_environment(
         self,
         time_of_day_hour: float,

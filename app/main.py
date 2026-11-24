@@ -589,14 +589,39 @@ with tab1:
         gps_resolved_name = loc_res["nearest_landmark"]["name"] if has_gps_landmark else None
 
         gps_resolve_info = None
-        if loc_res is not None and loc_res.get("current_location") is not None and hasattr(predictor, "env_engine") and predictor.env_engine is not None:
+        if loc_res is not None and loc_res.get("current_location") is not None:
             c_loc = loc_res["current_location"]
-            gps_resolve_info = predictor.env_engine.resolve_campus_location(
-                lat=c_loc.get("latitude"),
-                lon=c_loc.get("longitude"),
-                accuracy=c_loc.get("accuracy_meters"),
-                max_geofence_meters=350.0
-            )
+            r_lat = c_loc.get("latitude")
+            r_lon = c_loc.get("longitude")
+            r_acc = c_loc.get("accuracy_meters")
+
+            # Defensively delegate to predictor or env_engine
+            resolver = getattr(predictor, "resolve_campus_location", None)
+            if resolver is None and hasattr(predictor, "env_engine") and predictor.env_engine is not None:
+                resolver = getattr(predictor.env_engine, "resolve_campus_location", None)
+
+            if resolver is not None:
+                try:
+                    gps_resolve_info = resolver(
+                        lat=r_lat,
+                        lon=r_lon,
+                        accuracy=r_acc,
+                        max_geofence_meters=350.0
+                    )
+                except TypeError:
+                    try:
+                        # Fallback for older signatures without accuracy keyword
+                        gps_resolve_info = resolver(
+                            lat=r_lat,
+                            lon=r_lon,
+                            max_geofence_meters=350.0
+                        )
+                    except Exception as err:
+                        print(f"[app/main.py] Warning: Campus location resolution fallback failed: {err}", flush=True)
+                        gps_resolve_info = None
+                except Exception as err:
+                    print(f"[app/main.py] Warning: Campus location resolution failed: {err}", flush=True)
+                    gps_resolve_info = None
 
         is_ambiguous = (gps_resolve_info is not None and gps_resolve_info.get("status") == "AMBIGUOUS_LOCATION")
         is_outside_geofence = (gps_resolve_info is not None and gps_resolve_info.get("status") == "OUTSIDE_CAMPUS_GEOFENCE")
@@ -887,9 +912,9 @@ with tab2:
         st.markdown("#### 📊 Spatial Metrics")
 
         if loc_res and loc_res.get("nearest_landmark"):
-            near_lm = loc_res["nearest_landmark"]
-            det_lm = loc_res["detected_landmark"]
-            loc_risk_val = loc_res["location_risk_score"]
+            near_lm = loc_res.get("nearest_landmark") or {}
+            det_lm = loc_res.get("detected_landmark") or {}
+            loc_risk_val = loc_res.get("location_risk_score", 0.0)
             desc_val = loc_res.get("description", "")
             sec_dist = loc_res.get("distance_to_security_m", 0.0)
             light_val = loc_res.get("lighting_level", 0.0)
@@ -903,13 +928,17 @@ with tab2:
             light_val = "—"
             iso_val = 0.0
 
+        near_name = near_lm.get("name", "—")
+        near_dist = near_lm.get("distance_meters", "—")
+        det_name = det_lm.get("name", "—")
+
         st.html(f"""<div class='med-card'>
   <div style='font-size: 1.05rem; font-weight: 700; color: var(--text-primary);'>🎯 Nearest Campus Landmark</div>
-  <div style='font-size: 1.25rem; font-weight: 800; color: var(--primary-accent); margin: 4px 0;'>{near_lm["name"]}</div>
+  <div style='font-size: 1.25rem; font-weight: 800; color: var(--primary-accent); margin: 4px 0;'>{near_name}</div>
   <div style='font-size: 0.85rem; color: var(--text-secondary);'>{desc_val}</div>
   <hr style='margin: 10px 0; border: none; border-top: 1px solid var(--border-color);'>
-  <div class='med-metric-row'><span>Distance to Landmark:</span> <span><b>{near_lm["distance_meters"]}</b></span></div>
-  <div class='med-metric-row'><span>Detection Radius Status:</span> <span><b>{det_lm["name"]}</b></span></div>
+  <div class='med-metric-row'><span>Distance to Landmark:</span> <span><b>{near_dist}</b></span></div>
+  <div class='med-metric-row'><span>Detection Radius Status:</span> <span><b>{det_name}</b></span></div>
   <div class='med-metric-row'><span>Distance to Security Post:</span> <span><b>{sec_dist} m</b></span></div>
   <div class='med-metric-row'><span>Derived Zone Lighting:</span> <span><b>{light_val} / 10.0</b></span></div>
   <div class='med-metric-row'><span>Spatial Isolation Index:</span> <span><b>{iso_val * 100:.1f}%</b></span></div>
