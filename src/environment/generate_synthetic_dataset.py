@@ -13,6 +13,7 @@ import shutil
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from typing import Optional
 from datetime import datetime, timedelta
 
 _project_root = Path(__file__).resolve().parent.parent.parent
@@ -42,8 +43,8 @@ LOCATIONS = [
 ]
 
 def generate_synthetic_environmental_dataset(
-    baseline_excel_path: Path = Path("C:/Downloads/BIT_Mesra_Campus_Crowd_Dataset.xlsx"),
-    output_dir: Path = config.DATA_DIR / "environment",
+    baseline_excel_path: Optional[Path] = None,
+    output_dir: Optional[Path] = None,
     seed: int = 42
 ) -> pd.DataFrame:
     """
@@ -51,7 +52,14 @@ def generate_synthetic_environmental_dataset(
     Preserves original schedule and writes both .xlsx and .csv.
     """
     np.random.seed(seed)
+    if output_dir is None:
+        output_dir = config.DATA_DIR / "environment"
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if baseline_excel_path is None:
+        cand1 = output_dir / "BIT_Mesra_Campus_Crowd_Dataset(1).xlsx"
+        cand2 = output_dir / "BIT_Mesra_Campus_Crowd_Dataset.xlsx"
+        baseline_excel_path = cand1 if cand1.exists() else cand2
 
     # 1. Ensure baseline Excel file is archived in data/environment/
     target_baseline_xlsx = output_dir / "BIT_Mesra_Campus_Crowd_Dataset(1).xlsx"

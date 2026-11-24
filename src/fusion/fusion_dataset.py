@@ -16,7 +16,7 @@ def generate_fusion_dataset(
     """
     Generates a dataset of sub-model risk probabilities:
     [physiological_stress_score, location_risk_score, environment_risk_score]
-    mapped to ground truth overall threat label (0 = SAFE, 1 = RISKY).
+    mapped to ground truth overall context label (0 = STANDARD CONTEXT, 1 = ELEVATED CONTEXT).
     """
     np.random.seed(seed)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -36,7 +36,7 @@ def generate_fusion_dataset(
     
     latent_threat_score = weighted_sum + np.random.normal(0, 0.01, size=num_samples)
     
-    # Binary Threat Label (0 = SAFE, 1 = RISKY at 0.50 threshold)
+    # Binary Context Label (0 = STANDARD CONTEXT, 1 = ELEVATED CONTEXT at 0.50 threshold)
     threat_label = (latent_threat_score >= 0.50).astype(int)
     
     df = pd.DataFrame({
@@ -48,7 +48,7 @@ def generate_fusion_dataset(
     
     df.to_csv(output_csv, index=False)
     print(f"Fusion dataset generated with shape {df.shape} -> Saved to: {output_csv}", flush=True)
-    print(f"Target Distribution: Class 0 (SAFE): {np.sum(threat_label==0)}, Class 1 (RISKY): {np.sum(threat_label==1)}", flush=True)
+    print(f"Target Distribution: Class 0 (STANDARD CONTEXT): {np.sum(threat_label==0)}, Class 1 (ELEVATED CONTEXT): {np.sum(threat_label==1)}", flush=True)
     return df
 
 if __name__ == "__main__":
