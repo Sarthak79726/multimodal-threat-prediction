@@ -312,3 +312,120 @@ class WeightedLateFusionBaseline:
             "threshold": self.threshold,
             "scientific_note": "This baseline employs fixed, non-learned empirical weights for benchmarking purposes only."
         }
+
+class MultiOutputMetaLearner:
+    """
+    Multi-Output Meta-Learner Architecture.
+    Rather than forcing all campus safety and multimodal signals into one monolithic threat category,
+    maintains independent prediction heads for validated operational sub-categories:
+    1. PHYSIOLOGICAL_DISTRESS (Wearable autonomic distress)
+    2. CROWD_CONGESTION (Environmental density bottleneck)
+    3. ENVIRONMENTAL_HAZARD (Situational darkness / low visibility)
+    4. LOCATION_EXPOSURE (Spatial isolation / security distance)
+    5. VERIFIED_CAMPUS_INCIDENT (Ground truth incident verification)
+
+    Each head can be independently trained or marked UNTRAINED when data is not yet collected.
+    """
+    CANDIDATE_CATEGORIES = [
+        "PHYSIOLOGICAL_DISTRESS",
+        "CROWD_CONGESTION",
+        "ENVIRONMENTAL_HAZARD",
+        "LOCATION_EXPOSURE",
+        "VERIFIED_CAMPUS_INCIDENT"
+    ]
+
+    def __init__(
+        self,
+        base_learner_type: str = "logistic_regression",
+        feature_names: Optional[List[str]] = None,
+        random_state: int = 42
+    ):
+        self.base_learner_type = base_learner_type.lower()
+        self.feature_names = feature_names or config.STACKING_META_FEATURES
+        self.random_state = random_state
+        self.category_models: Dict[str, BaseMetaLearner] = {}
+        self.category_status: Dict[str, Dict[str, Any]] = {}
+
+        for cat in self.CANDIDATE_CATEGORIES:
+            if self.base_learner_type == "xgboost" and HAS_XGBOOST:
+                self.category_models[cat] = XGBoostMetaLearner(
+                    feature_names=self.feature_names,
+                    random_state=self.random_state
+                )
+            else:
+                self.category_models[cat] = LogisticRegressionMetaLearner(
+                    feature_names=self.feature_names,
+                    random_state=self.random_state
+                )
+            self.category_status[cat] = {
+                "is_trained": False,
+                "status": "UNTRAINED — Ground-Truth Labels Required",
+                "samples_trained": 0,
+                "model_type": self.category_models[cat].model_name
+            }
+
+    def fit_category(
+        self,
+        category: str,
+        X_meta: np.ndarray,
+        y: np.ndarray,
+        allow_simulation: bool = False
+    ) -> "MultiOutputMetaLearner":
+        """Fits an individual outcome category model using validated ground-truth labels."""
+        if category not in self.CANDIDATE_CATEGORIES:
+            raise ValueError(f"Unknown category '{category}'. Supported: {self.CANDIDATE_CATEGORIES}")
+
+        X_arr = np.asarray(X_meta, dtype=np.float64)
+        y_arr = np.asarray(y, dtype=np.int32).ravel()
+
+        if len(np.unique(y_arr)) < 2:
+            raise ValueError(f"Category '{category}' training requires at least 2 target classes.")
+
+        model = self.category_models[category]
+        model.fit(X_arr, y_arr)
+
+        self.category_status[category] = {
+            "is_trained": True,
+            "status": "SIMULATION_BENCHMARK" if allow_simulation else "TRAINED_VERIFIED",
+            "samples_trained": len(y_arr),
+            "model_type": model.model_name
+        }
+        return self
+
+    def predict_categories(self, X_meta: np.ndarray) -> Dict[str, Dict[str, Any]]:
+        """
+        Evaluates predictions across all candidate risk categories.
+        Untrained categories return explicit UNTRAINED status rather than fabricated numbers.
+        """
+        X_arr = np.asarray(X_meta, dtype=np.float64)
+        if X_arr.ndim == 1:
+            X_arr = X_arr.reshape(1, -1)
+
+        results = {}
+        for cat in self.CANDIDATE_CATEGORIES:
+            status_info = self.category_status[cat]
+            if not status_info["is_trained"]:
+                results[cat] = {
+                    "category": cat,
+                    "is_trained": False,
+                    "status": "UNTRAINED — Awaiting Ground-Truth Labels",
+                    "probability": None,
+                    "confidence": None,
+                    "model_type": status_info["model_type"],
+                    "notice": f"Category '{cat}' requires independently validated ground-truth labels before deployment."
+                }
+            else:
+                prob = float(self.category_models[cat].predict_proba(X_arr)[0, 1])
+                conf = float(abs(prob - 0.5) * 2.0)  # Certainty distance from decision threshold
+                results[cat] = {
+                    "category": cat,
+                    "is_trained": True,
+                    "status": status_info["status"],
+                    "probability": round(prob, 4),
+                    "probability_pct": round(prob * 100.0, 2),
+                    "confidence": round(conf, 4),
+                    "model_type": status_info["model_type"]
+                }
+
+        return results
+

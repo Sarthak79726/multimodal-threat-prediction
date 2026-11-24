@@ -36,6 +36,8 @@ from src.location.model import SpatialRiskEngine
 from src.environment.model import EnvironmentalContextEngine
 from src.fusion.meta_learner import WeightedLateFusionBaseline
 from src.fusion.stacking_pipeline import StackingEnsemblePipeline, IneligibleProductionArtifactError
+from src.fusion.fusion_config import FusionMode, MissingModalityStrategy
+from src.fusion.fusion_engine import DynamicMultimodalFusionEngine
 
 class MultimodalThreatPredictor:
     """
@@ -74,6 +76,13 @@ class MultimodalThreatPredictor:
 
         # 3. Explicit Reference Baseline
         self.baseline = WeightedLateFusionBaseline(threshold=config.DEFAULT_DECISION_THRESHOLD)
+
+        # 4. Unified Dynamic Multimodal Fusion Engine
+        self.dynamic_fusion_engine = DynamicMultimodalFusionEngine(
+            default_mode=FusionMode.STATIC_WEIGHTED,
+            missing_strategy=MissingModalityStrategy.MARGINALIZED_EXCLUSION,
+            threshold=config.DEFAULT_DECISION_THRESHOLD
+        )
 
     def predict_physiological(self, input_dict: Dict[str, float]) -> float:
         """Computes physiological stress score P(Stress=1 | biometrics) from feature dictionary."""
@@ -280,7 +289,13 @@ class MultimodalThreatPredictor:
         threshold: float = 0.50,
         weight_physio: float = 0.40,
         weight_location: float = 0.25,
-        weight_environment: float = 0.35
+        weight_environment: float = 0.35,
+        fusion_mode: Optional[str] = None,
+        physio_telemetry: Optional[Dict[str, Any]] = None,
+        spatial_analysis: Optional[Dict[str, Any]] = None,
+        environmental_res: Optional[Dict[str, Any]] = None,
+        is_manual_override: bool = False,
+        **kwargs: Any
     ) -> Dict[str, Any]:
         """
         Combines input modality risk scores.
@@ -304,6 +319,26 @@ class MultimodalThreatPredictor:
             and isinstance(environment_risk_score, (int, float))
             and np.isfinite(environment_risk_score)
             and 0.0 <= float(environment_risk_score) <= 1.0
+        )
+
+        # Resolve requested fusion mode
+        resolved_mode = None
+        if fusion_mode:
+            try:
+                resolved_mode = FusionMode(fusion_mode)
+            except Exception:
+                resolved_mode = FusionMode.STATIC_WEIGHTED
+
+        # Execute unified dynamic multimodal fusion evaluation
+        dynamic_eval = self.dynamic_fusion_engine.evaluate_fusion(
+            p_stress=phys_norm,
+            l_risk=loc_norm,
+            e_risk=environment_risk_score if is_env_available else None,
+            physio_telemetry=physio_telemetry,
+            spatial_analysis=spatial_analysis,
+            environmental_res=environmental_res,
+            is_manual_override=is_manual_override,
+            mode=resolved_mode
         )
 
         logger.info(
@@ -402,7 +437,15 @@ class MultimodalThreatPredictor:
                 "baseline_threat_score_pct": partial_pct,
                 "baseline_status": partial_status,
                 "threshold_used": threshold,
-                "explanation": explanation
+                "explanation": explanation,
+                # Dynamic Multimodal Intelligence Enhancements
+                "active_fusion_mode": dynamic_eval["fusion_mode"],
+                "active_fusion_mode_name": dynamic_eval["fusion_mode_name"],
+                "reliability_summary": dynamic_eval["reliability_summary"],
+                "candidate_risk_categories": dynamic_eval["candidate_risk_categories"],
+                "uncertainty_index": dynamic_eval["uncertainty_index"],
+                "dynamic_gating_details": dynamic_eval.get("dynamic_gating_details"),
+                "safety_policy": dynamic_eval["safety_policy"]
             }
 
         # -----------------------------------------------------------------
@@ -521,7 +564,15 @@ class MultimodalThreatPredictor:
                 "environment": contrib_e * 100.0
             },
             "threshold_used": threshold,
-            "explanation": explanation
+            "explanation": explanation,
+            # Dynamic Multimodal Intelligence Enhancements
+            "active_fusion_mode": dynamic_eval["fusion_mode"],
+            "active_fusion_mode_name": dynamic_eval["fusion_mode_name"],
+            "reliability_summary": dynamic_eval["reliability_summary"],
+            "candidate_risk_categories": dynamic_eval["candidate_risk_categories"],
+            "uncertainty_index": dynamic_eval["uncertainty_index"],
+            "dynamic_gating_details": dynamic_eval.get("dynamic_gating_details"),
+            "safety_policy": dynamic_eval["safety_policy"]
         }
 
     def _generate_partial_explanation(
@@ -580,6 +631,17 @@ class MultimodalThreatPredictor:
             f"and environmental context risk ({env_pct:.1f}%) using predefined reference weights. "
             f"This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe."
         )
+
+    def set_fusion_mode(self, mode_str: str) -> None:
+        """Sets the active fusion mode on the underlying dynamic fusion engine."""
+        try:
+            self.dynamic_fusion_engine.set_fusion_mode(FusionMode(mode_str))
+        except Exception:
+            self.dynamic_fusion_engine.set_fusion_mode(FusionMode.STATIC_WEIGHTED)
+
+    def get_fusion_mode(self) -> str:
+        """Retrieves active fusion mode name."""
+        return self.dynamic_fusion_engine.active_mode.value
 
 if __name__ == "__main__":
     predictor = MultimodalThreatPredictor()
