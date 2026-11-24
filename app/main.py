@@ -321,8 +321,8 @@ def cached_load_subject_data(subject_id: str):
     return load_subject_data(subject_id)
 
 @st.cache_resource
-def load_predictor():
-    """Initializes and caches the unified MultimodalThreatPredictor singleton (v2.1)."""
+def load_predictor(version: str = "v2.2_defensive_env"):
+    """Initializes and caches the unified MultimodalThreatPredictor singleton (v2.2)."""
     return MultimodalThreatPredictor()
 
 predictor = load_predictor()
@@ -480,9 +480,10 @@ with tab1:
                 st.session_state["gps_error_msg"] = None
 
                 if st.session_state.get("analyzed_threat") is not None:
+                    loc_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
                     st.session_state["analyzed_threat"] = predictor.predict_fusion(
                         physiological_stress_score=st.session_state["physio_score"],
-                        location_risk_score=st.session_state["location_score"],
+                        location_risk_score=loc_val,
                         environment_risk_score=st.session_state["env_score"],
                         threshold=0.50
                     )
@@ -662,18 +663,33 @@ with tab1:
                 "calibrated_environmental_score": None
             }
 
-        if env_pred.get("status") == "SUCCESS" and env_pred.get("environmental_context_score") is not None:
-            st.session_state["env_score"] = env_pred["environmental_context_score"]
+        # Defensive environmental score extraction and validation
+        env_score_candidate = env_pred.get("environmental_context_score")
+        if env_score_candidate is None:
+            env_score_candidate = env_pred.get("calibrated_environmental_score")
+        if env_score_candidate is None:
+            env_score_candidate = env_pred.get("environment_risk_score")
 
-            crowd_res = env_pred["crowd_prediction"]
-            light_res = env_pred["lighting_prediction"]
-            crowd_cat = crowd_res["category"]
-            crowd_conf = crowd_res["confidence_pct"]
-            crowd_model = crowd_res["model_name"]
+        is_valid_env_score = (
+            env_score_candidate is not None
+            and isinstance(env_score_candidate, (int, float))
+            and np.isfinite(env_score_candidate)
+            and 0.0 <= float(env_score_candidate) <= 1.0
+        )
+        is_success = (env_pred.get("status") == "SUCCESS") and is_valid_env_score
 
-            light_cat = light_res["category"]
-            light_conf = light_res["confidence_pct"]
-            light_model = light_res["model_name"]
+        if is_success:
+            st.session_state["env_score"] = float(env_score_candidate)
+
+            crowd_res = env_pred.get("crowd_prediction", {})
+            light_res = env_pred.get("lighting_prediction", {})
+            crowd_cat = crowd_res.get("category", "—")
+            crowd_conf = crowd_res.get("confidence_pct", 0.0)
+            crowd_model = crowd_res.get("model_name", "Active ML")
+
+            light_cat = light_res.get("category", "—")
+            light_conf = light_res.get("confidence_pct", 0.0)
+            light_model = light_res.get("model_name", "Active ML")
             lux_val = light_res.get("lux_estimate", "—")
 
             st.html(f"""<div style='margin-top: 6px;'>
@@ -708,7 +724,16 @@ with tab1:
             crowd_conf = crowd_res.get("confidence_pct", 0.0)
             light_cat = light_res.get("category", "UNKNOWN")
             light_conf = light_res.get("confidence_pct", 0.0)
-            warn_msg = env_pred.get("message") or env_pred.get("warning") or "Environmental models unavailable or unsupported campus location."
+
+            # Defensive failure reason extraction: NEVER show success disclaimer as an error
+            raw_err = env_pred.get("message") or env_pred.get("error")
+            raw_warn = env_pred.get("warning")
+            if raw_err:
+                warn_msg = str(raw_err)
+            elif raw_warn and not str(raw_warn).startswith("EXPERIMENTAL PREDICTION"):
+                warn_msg = str(raw_warn)
+            else:
+                warn_msg = "Environmental models unavailable or unsupported campus location."
 
             st.html(f"""<div style='margin-top: 6px;'>
   <div class='med-metric-row'><span class='med-metric-label'>Location</span> <span class='med-metric-value med-metric-value-accent'>{active_env_location}</span></div>

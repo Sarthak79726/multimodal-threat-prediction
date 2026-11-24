@@ -17,6 +17,7 @@ All predictions are explicitly tagged:
 
 import sys
 import pickle
+import logging
 import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
@@ -28,6 +29,14 @@ except ImportError:
 
 import numpy as np
 import pandas as pd
+
+# Configure diagnostic logger
+logger = logging.getLogger("EnvironmentalContextEngine")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
 
 _project_root = str(Path(__file__).resolve().parent.parent.parent)
 if _project_root not in sys.path:
@@ -90,6 +99,8 @@ class EnvironmentalContextEngine:
         """Loads trained ML artifacts for crowd and lighting prediction."""
         try:
             if self.crowd_model_path.exists() and self.lighting_model_path.exists():
+                logger.info("Loading environmental models from: crowd='%s', lighting='%s'",
+                            self.crowd_model_path, self.lighting_model_path)
                 with open(self.crowd_model_path, "rb") as f:
                     self.crowd_artifact = pickle.load(f)
                 with open(self.lighting_model_path, "rb") as f:
@@ -97,14 +108,19 @@ class EnvironmentalContextEngine:
 
                 self.is_trained_ml = True
                 self.load_error = None
+                logger.info("Environmental models loaded successfully. Crowd: %s (classes: %s), Lighting: %s (classes: %s)",
+                            self.crowd_artifact.get("model_name"), self.crowd_artifact.get("classes"),
+                            self.lighting_artifact.get("model_name"), self.lighting_artifact.get("classes"))
             else:
                 self.is_trained_ml = False
                 self.load_error = f"Model artifacts not found at {self.crowd_model_path} or {self.lighting_model_path}"
+                logger.warning("Environmental models missing: %s", self.load_error)
         except Exception as e:
             self.is_trained_ml = False
             self.load_error = f"Failed to deserialize artifacts: {str(e)}"
             self.crowd_artifact = None
             self.lighting_artifact = None
+            logger.error("Environmental model loading failed: %s", self.load_error, exc_info=True)
 
     @staticmethod
     def get_current_ist_time() -> Dict[str, Any]:
@@ -221,21 +237,38 @@ class EnvironmentalContextEngine:
         If temporal parameters are omitted, automatically extracts current IST system time.
         Validates location against supported BIT Mesra landmarks.
         """
-        # Automatic time detection if parameters not provided
+        # 1. Automatic time detection & defensive parameter sanitization
         if hour_of_day is None or day_of_week is None or weekend_indicator is None:
             ist_info = self.get_current_ist_time()
             hour_of_day = ist_info["hour_of_day"] if hour_of_day is None else hour_of_day
             day_of_week = ist_info["day_of_week"] if day_of_week is None else day_of_week
             weekend_indicator = ist_info["is_weekend"] if weekend_indicator is None else weekend_indicator
-            time_display = ist_info["time_str"]
+            time_display = ist_info.get("time_str", "12:00 PM IST")
         else:
-            int_h = int(hour_of_day) % 24
-            min_frac = int((hour_of_day - int_h) * 60)
-            ampm = "AM" if int_h < 12 else "PM"
-            disp_h = 12 if (int_h % 12 == 0) else (int_h % 12)
-            time_display = f"{disp_h:02d}:{min_frac:02d} {ampm} IST"
+            try:
+                int_h = int(float(hour_of_day)) % 24
+                min_frac = int((float(hour_of_day) - int_h) * 60)
+                ampm = "AM" if int_h < 12 else "PM"
+                disp_h = 12 if (int_h % 12 == 0) else (int_h % 12)
+                time_display = f"{disp_h:02d}:{min_frac:02d} {ampm} IST"
+            except Exception:
+                time_display = "12:00 PM IST"
 
-        # Validate location
+        # Defensive type coercion
+        try:
+            effective_hour = float(hour_of_day) % 24.0
+        except (ValueError, TypeError):
+            ist_fallback = self.get_current_ist_time()
+            effective_hour = float(ist_fallback["hour_float"])
+
+        try:
+            effective_wknd = 1 if int(weekend_indicator) != 0 else 0
+        except (ValueError, TypeError):
+            effective_wknd = 0
+
+        effective_day = str(day_of_week).strip().capitalize() if day_of_week else "Monday"
+
+        # 2. Validate location
         clean_loc = None
         if location is not None and str(location).strip():
             target_str = str(location).strip()
@@ -251,15 +284,16 @@ class EnvironmentalContextEngine:
                         break
 
         if clean_loc is None:
+            logger.warning("Unsupported campus location requested: '%s'. Valid locations: %s", location, SUPPORTED_LOCATIONS)
             return {
                 "status": "UNKNOWN",
                 "error": "UNSUPPORTED_LOCATION",
                 "message": f"Location '{location}' is not a recognized BIT Mesra campus landmark. Must be one of 17 supported locations.",
                 "location": "UNKNOWN",
                 "time_display": time_display,
-                "hour_of_day": hour_of_day,
-                "day_of_week": day_of_week,
-                "weekend_indicator": weekend_indicator,
+                "hour_of_day": round(effective_hour, 2),
+                "day_of_week": effective_day,
+                "weekend_indicator": effective_wknd,
                 "crowd_prediction": {
                     "category": "UNKNOWN",
                     "confidence": 0.0,
@@ -279,22 +313,24 @@ class EnvironmentalContextEngine:
                 "environmental_lighting_context_score": None,
                 "environmental_context_score": None,
                 "calibrated_environmental_score": None,
+                "environment_risk_score": None,
                 "is_trained_ml": False,
                 "synthetic_provenance": "NONE",
-                "warning": "Location unknown. Output cannot be calculated from ML models. Modality is UNKNOWN."
+                "warning": f"Location '{location}' is not supported. Output marked UNKNOWN without silent neutral substitution."
             }
 
-        # Check if models are loaded
+        # 3. Check if models are loaded
         if not self.is_trained_ml or self.crowd_artifact is None or self.lighting_artifact is None:
+            logger.warning("Prediction aborted: models unavailable (%s)", self.load_error)
             return {
                 "status": "UNKNOWN",
                 "error": "MODEL_UNAVAILABLE",
                 "message": f"ML model artifacts not loaded ({self.load_error}).",
                 "location": clean_loc,
                 "time_display": time_display,
-                "hour_of_day": hour_of_day,
-                "day_of_week": day_of_week,
-                "weekend_indicator": weekend_indicator,
+                "hour_of_day": round(effective_hour, 2),
+                "day_of_week": effective_day,
+                "weekend_indicator": effective_wknd,
                 "crowd_prediction": {
                     "category": "UNKNOWN",
                     "confidence": 0.0,
@@ -314,20 +350,23 @@ class EnvironmentalContextEngine:
                 "environmental_lighting_context_score": None,
                 "environmental_context_score": None,
                 "calibrated_environmental_score": None,
+                "environment_risk_score": None,
                 "is_trained_ml": False,
                 "synthetic_provenance": "NONE",
-                "warning": "Model artifacts unavailable. Modality is UNKNOWN."
+                "warning": f"Model artifacts unavailable ({self.load_error}). Output marked UNKNOWN without silent neutral substitution."
             }
 
-        # Prepare feature DataFrame for preprocessing
+        # 4. Prepare feature DataFrame for preprocessing
         input_df = pd.DataFrame([{
             "location": clean_loc,
-            "hour_of_day": float(hour_of_day),
-            "day_of_week": str(day_of_week),
-            "weekend_indicator": int(weekend_indicator)
+            "hour_of_day": float(effective_hour),
+            "day_of_week": str(effective_day),
+            "weekend_indicator": int(effective_wknd)
         }])
 
         try:
+            logger.info("Executing environmental inference: location='%s', hour=%.2f, day='%s', is_weekend=%d",
+                        clean_loc, effective_hour, effective_day, effective_wknd)
             # Preprocess features using the trained preprocessor
             preprocessor = self.crowd_artifact["preprocessor"]
             X_features = preprocessor.transform(input_df)
@@ -377,7 +416,7 @@ class EnvironmentalContextEngine:
                 light_vuln = 0.05
 
             # Diurnal Time Vulnerability Factor
-            hour_mod = float(hour_of_day) % 24.0
+            hour_mod = float(effective_hour) % 24.0
             if hour_mod >= 23.0 or hour_mod <= 4.5:
                 time_factor = 0.35
             elif (20.0 <= hour_mod < 23.0) or (4.5 < hour_mod <= 6.0):
@@ -386,14 +425,19 @@ class EnvironmentalContextEngine:
                 time_factor = 0.05
 
             env_score = round(min(1.0, max(0.05, time_factor + light_vuln + crowd_vuln)), 4)
+            if not np.isfinite(env_score):
+                raise ValueError("Calculated environmental context score is non-finite.")
+
+            logger.info("Environmental inference succeeded: crowd=%s (%.1f%%, %s), lighting=%s (%.1f%%, %s, ~%.1f lx) -> composite_score=%.4f",
+                        crowd_pred_cat, crowd_conf * 100, crowd_model_name, light_pred_cat, light_conf * 100, light_model_name, lux_val, env_score)
 
             return {
                 "status": "SUCCESS",
                 "location": clean_loc,
                 "time_display": time_display,
-                "hour_of_day": round(float(hour_of_day), 2),
-                "day_of_week": day_of_week,
-                "weekend_indicator": weekend_indicator,
+                "hour_of_day": round(float(effective_hour), 2),
+                "day_of_week": effective_day,
+                "weekend_indicator": effective_wknd,
                 "crowd_prediction": {
                     "category": crowd_pred_cat,
                     "confidence": round(crowd_conf, 4),
@@ -417,30 +461,34 @@ class EnvironmentalContextEngine:
                 "environmental_lighting_context_score": light_vuln,
                 "environmental_context_score": env_score,
                 "calibrated_environmental_score": env_score,
+                "environment_risk_score": env_score,
                 "is_trained_ml": True,
                 "synthetic_provenance": "SYNTHETIC_SIMULATION_RULE_GENERATED",
+                "disclaimer": "EXPERIMENTAL PREDICTION — NOT LIVE SENSOR MEASUREMENT. Actual campus crowd and lighting conditions may differ from predictions.",
                 "warning": "EXPERIMENTAL PREDICTION — NOT LIVE SENSOR MEASUREMENT. Actual campus crowd and lighting conditions may differ from predictions."
             }
 
         except Exception as e:
+            logger.error("Environmental inference execution failed: %s", str(e), exc_info=True)
             return {
                 "status": "UNKNOWN",
                 "error": "INFERENCE_FAILED",
                 "message": f"Inference execution failed: {str(e)}",
                 "location": clean_loc,
                 "time_display": time_display,
-                "hour_of_day": hour_of_day,
-                "day_of_week": day_of_week,
-                "weekend_indicator": weekend_indicator,
+                "hour_of_day": effective_hour,
+                "day_of_week": effective_day,
+                "weekend_indicator": effective_wknd,
                 "crowd_prediction": {"category": "UNKNOWN", "confidence": 0.0, "confidence_pct": 0.0, "model_name": "None", "status": "ERROR"},
                 "lighting_prediction": {"category": "UNKNOWN", "confidence": 0.0, "confidence_pct": 0.0, "model_name": "None", "lux_estimate": None, "status": "ERROR"},
                 "environmental_crowd_context_score": None,
                 "environmental_lighting_context_score": None,
                 "environmental_context_score": None,
                 "calibrated_environmental_score": None,
+                "environment_risk_score": None,
                 "is_trained_ml": False,
                 "synthetic_provenance": "NONE",
-                "warning": "Model inference failed. Output is UNKNOWN."
+                "warning": f"Model inference failed: {str(e)}. Modality is UNKNOWN."
             }
 
     def predict_score(

@@ -11,10 +11,19 @@ Guarantees transparent provenance tracking:
 
 import sys
 import pickle
+import logging
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+# Configure diagnostic logger
+logger = logging.getLogger("MultimodalThreatPredictor")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
 
 # Ensure project root is in sys.path
 _project_root = str(Path(__file__).resolve().parent.parent.parent)
@@ -139,6 +148,9 @@ class MultimodalThreatPredictor:
         and situational environmental context scores.
         Handles engine unavailability or errors defensively without crashing.
         """
+        logger.info("predict_environment_context called: location='%s', hour=%s, day='%s', is_weekend=%s",
+                    location, hour, day_of_week, is_weekend)
+
         if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "predict_environment"):
             try:
                 res = self.env_engine.predict_environment(
@@ -149,11 +161,33 @@ class MultimodalThreatPredictor:
                 )
                 self._last_crowd_score = res.get("environmental_crowd_context_score")
                 self._last_lighting_score = res.get("environmental_lighting_context_score")
+
+                # Defensive score key alignment
+                env_score = res.get("environmental_context_score")
+                if env_score is None:
+                    env_score = res.get("calibrated_environmental_score")
+                if env_score is None:
+                    env_score = res.get("environment_risk_score")
+
+                if env_score is not None and np.isfinite(env_score) and 0.0 <= float(env_score) <= 1.0:
+                    res["environmental_context_score"] = float(env_score)
+                    res["calibrated_environmental_score"] = float(env_score)
+                    res["environment_risk_score"] = float(env_score)
+                else:
+                    if res.get("status") == "SUCCESS":
+                        logger.warning("Environmental score non-finite or invalid: %s. Setting score to None.", env_score)
+                        res["environmental_context_score"] = None
+                        res["calibrated_environmental_score"] = None
+                        res["environment_risk_score"] = None
+
+                logger.info("predict_environment_context completed: status='%s', score=%s, error=%s",
+                            res.get("status"), res.get("environmental_context_score"), res.get("error"))
                 return res
             except Exception as e:
-                print(f"[MultimodalThreatPredictor] predict_environment failed: {e}", flush=True)
+                logger.error("predict_environment unexpected error: %s", str(e), exc_info=True)
 
         # Defensive fallback when environmental engine is unavailable or uninitialized
+        logger.warning("Environmental engine unavailable or uninitialized. Returning UNAVAILABLE fallback.")
         time_info = self.get_current_ist_time()
         effective_hour = hour if hour is not None else time_info["hour_float"]
         effective_day = day_of_week or time_info["day_of_week"]
@@ -190,6 +224,7 @@ class MultimodalThreatPredictor:
             "environmental_lighting_context_score": None,
             "environmental_context_score": None,
             "calibrated_environmental_score": None,
+            "environment_risk_score": None,
             "is_trained_ml": False,
             "synthetic_provenance": "NONE",
             "warning": "Environmental models unavailable. Output marked UNKNOWN without silent neutral substitution."
@@ -215,14 +250,24 @@ class MultimodalThreatPredictor:
           - Formula: R_partial = (0.40 * P + 0.25 * L) / 0.65.
           - Sets experimental_context_index to None to signify the 3-branch index is incomplete.
         """
-        # Normalize biometric and spatial inputs to [0.0, 1.0]
-        phys_norm = float(np.clip(physiological_stress_score, 0.0, 1.0))
-        loc_norm = float(np.clip(location_risk_score, 0.0, 1.0))
+        # Defensive normalization of biometric and spatial inputs to [0.0, 1.0]
+        p_val = 0.18 if (physiological_stress_score is None or not np.isfinite(physiological_stress_score)) else float(physiological_stress_score)
+        l_val = 0.15 if (location_risk_score is None or not np.isfinite(location_risk_score)) else float(location_risk_score)
+        phys_norm = float(np.clip(p_val, 0.0, 1.0))
+        loc_norm = float(np.clip(l_val, 0.0, 1.0))
 
-        # Check whether environmental modality is available
+        # Check whether environmental modality is available and finite in [0.0, 1.0]
         is_env_available = (
             environment_risk_score is not None
-            and not (isinstance(environment_risk_score, float) and np.isnan(environment_risk_score))
+            and isinstance(environment_risk_score, (int, float))
+            and np.isfinite(environment_risk_score)
+            and 0.0 <= float(environment_risk_score) <= 1.0
+        )
+
+        logger.info(
+            "predict_fusion: P=%.4f, L=%.4f, E=%s -> mode=%s",
+            phys_norm, loc_norm, environment_risk_score,
+            "THREE_BRANCH_FUSION" if is_env_available else "PARTIAL_DUAL_BRANCH"
         )
 
         modalities_metadata = {
