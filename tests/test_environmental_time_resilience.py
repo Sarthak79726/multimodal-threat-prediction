@@ -130,7 +130,8 @@ class TestEnvironmentalTimeAndFaultTolerance(unittest.TestCase):
         self.assertEqual(context_res["status"], "UNAVAILABLE")
         self.assertEqual(context_res["crowd_prediction"]["category"], "UNKNOWN")
         self.assertEqual(context_res["lighting_prediction"]["category"], "UNKNOWN")
-        self.assertEqual(context_res["calibrated_environmental_score"], 0.20)
+        self.assertIsNone(context_res["environmental_context_score"])
+        self.assertIsNone(context_res["calibrated_environmental_score"])
 
         # predict_fusion fallback
         fusion_res = predictor.predict_fusion(0.20, 0.20, 0.20)
@@ -178,7 +179,8 @@ class TestEnvironmentalTimeAndFaultTolerance(unittest.TestCase):
         self.assertEqual(res["error"], "UNSUPPORTED_LOCATION")
         self.assertEqual(res["crowd_prediction"]["category"], "UNKNOWN")
         self.assertEqual(res["lighting_prediction"]["category"], "UNKNOWN")
-        self.assertEqual(res["calibrated_environmental_score"], 0.20)
+        self.assertIsNone(res["environmental_context_score"])
+        self.assertIsNone(res["calibrated_environmental_score"])
 
     def test_engine_missing_artifacts_safe_handling(self):
         """Verifies that missing model files result in UNKNOWN status and do not raise unhandled exceptions."""

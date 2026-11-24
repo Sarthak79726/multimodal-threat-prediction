@@ -143,17 +143,17 @@ def render_header():
 def render_overall_risk_panel(res: dict):
     phys_norm = float(res.get("physiological_stress_score", 0.0))
     loc_norm = float(res.get("location_risk_score", 0.0))
-    env_norm = float(res.get("environment_risk_score", 0.0))
+    env_norm = res.get("environment_risk_score")
 
     phys_pct = phys_norm * 100.0
     loc_pct = loc_norm * 100.0
-    env_pct = env_norm * 100.0
+    env_pct = (float(env_norm) * 100.0) if env_norm is not None else None
 
+    fusion_mode = res.get("fusion_mode", "THREE_BRANCH_FUSION")
     is_stacker_trained = bool(res.get("is_meta_learner_trained", False))
-    final_prob = float(res.get("experimental_context_index", res.get("threat_probability", 0.0)))
-    final_pct = float(res.get("experimental_context_index_pct", res.get("threat_score_pct", final_prob * 100.0)))
     status = str(res.get("context_status", res.get("context_classification", "STANDARD CONTEXT")))
-    
+    explanation_txt = html.escape(str(res.get("explanation", "")))
+
     if status == "HIGH CONTEXT":
         status_badge_cls = "score-danger"
     elif status == "ELEVATED CONTEXT":
@@ -161,11 +161,72 @@ def render_overall_risk_panel(res: dict):
     else:
         status_badge_cls = "score-safe"
 
-    explanation_txt = html.escape(str(res.get("explanation", "")))
+    # =========================================================================
+    # CASE 1: PARTIAL DUAL-BRANCH CONTEXT INDEX (ENV MISSING / UNKNOWN)
+    # =========================================================================
+    if fusion_mode == "PARTIAL_DUAL_BRANCH" or res.get("experimental_context_index") is None:
+        partial_pct = float(res.get("partial_dual_branch_index_pct", res.get("threat_score_pct", 0.0)))
+        contrib_p_partial = phys_pct * (0.40 / 0.65)
+        contrib_l_partial = loc_pct * (0.25 / 0.65)
+
+        rendered = f"""<div class="med-overall-panel">
+  <div class="med-overall-header">
+    Overall Context Assessment — Partial Dual-Branch Context Index (Fallback Mode)
+  </div>
+  <div class="med-overall-content">
+    <div class="med-score-hero">
+      <div class="med-score-hero-title">PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)</div>
+      <div class="med-score-hero-num">{partial_pct:.2f}%</div>
+      <div style="margin: 8px 0; font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);">
+        Context Classification: <span class="med-score-badge {status_badge_cls}" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">{status}</span>
+      </div>
+      <div style="margin-top: 6px;">
+        <span class="med-provenance-pill pill-rule">Meta-Learner: NOT TRAINED</span>
+      </div>
+      <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic;">
+        This partial index evaluates physiological stress and spatial location only. Environmental context is UNKNOWN.
+      </div>
+    </div>
+    <div class="med-breakdown-box">
+      <div class="med-alert-warn" style="margin-bottom: 12px; font-size: 0.88rem; line-height: 1.45;">
+        ⚠️ <b>COMPLETE THREE-BRANCH CONTEXT INDEX UNAVAILABLE (ENVIRONMENTAL UNKNOWN):</b> Environmental context inputs are missing or unverified. No neutral values are silently substituted.
+      </div>
+      <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;">
+        Partial Dual-Branch Re-Normalized Weighting Breakdown
+      </div>
+      <div class="med-breakdown-item">
+        <span>Physiological Stress (Re-normalized 61.54% Weight):</span>
+        <span><b>{phys_pct:.1f}% × 0.6154 = {contrib_p_partial:.2f}%</b></span>
+      </div>
+      <div class="med-breakdown-item">
+        <span>Location Context Risk (Re-normalized 38.46% Weight):</span>
+        <span><b>{loc_pct:.1f}% × 0.3846 = {contrib_l_partial:.2f}%</b></span>
+      </div>
+      <div class="med-breakdown-item" style="color: var(--text-secondary); opacity: 0.7;">
+        <span>Environmental Context (Excluded):</span>
+        <span><b>UNKNOWN (Excluded from index calculation)</b></span>
+      </div>
+      <div style="margin-top: 10px; font-size: 0.83rem; color: var(--text-secondary); font-style: italic;">
+        ℹ️ <b>Formula:</b> <code>R_partial = (0.40 × P + 0.25 × L) / 0.65</code>. Situational illumination and crowd density are omitted.
+      </div>
+      <div class="med-rationale-note">
+        <b>Decision Rationale:</b> {explanation_txt}
+      </div>
+    </div>
+  </div>
+</div>"""
+        st.html(rendered)
+        return
+
+    # =========================================================================
+    # CASE 2: COMPLETE THREE-BRANCH CONTEXT ASSESSMENT (ALL 3 PRESENT)
+    # =========================================================================
+    final_prob = float(res.get("experimental_context_index", res.get("threat_probability", 0.0)))
+    final_pct = float(res.get("experimental_context_index_pct", res.get("threat_score_pct", final_prob * 100.0)))
 
     contrib_p = phys_pct * 0.40
     contrib_l = loc_pct * 0.25
-    contrib_e = env_pct * 0.35
+    contrib_e = (env_pct * 0.35) if env_pct is not None else 0.0
 
     if is_stacker_trained:
         # Rendered only when an independently verified production empirical model has been trained
@@ -521,12 +582,54 @@ with tab1:
         hour_val = ist_time_info.get("hour_float", 12.0)
         wknd_tag = "Weekend" if is_wknd else "Weekday"
 
-        # 2. Location Resolution (GPS vs Manual Fallback)
+        # 2. Location Resolution (GPS vs Ambiguity vs Manual Fallback)
         loc_res = st.session_state.get("location_res")
         has_gps_landmark = (loc_res is not None and loc_res.get("nearest_landmark") is not None)
         gps_resolved_name = loc_res["nearest_landmark"]["name"] if has_gps_landmark else None
 
-        if has_gps_landmark:
+        gps_resolve_info = None
+        if loc_res is not None and loc_res.get("current_location") is not None and hasattr(predictor, "env_engine") and predictor.env_engine is not None:
+            c_loc = loc_res["current_location"]
+            gps_resolve_info = predictor.env_engine.resolve_campus_location(
+                lat=c_loc.get("latitude"),
+                lon=c_loc.get("longitude"),
+                accuracy=c_loc.get("accuracy_meters"),
+                max_geofence_meters=350.0
+            )
+
+        is_ambiguous = (gps_resolve_info is not None and gps_resolve_info.get("status") == "AMBIGUOUS_LOCATION")
+        is_outside_geofence = (gps_resolve_info is not None and gps_resolve_info.get("status") == "OUTSIDE_CAMPUS_GEOFENCE")
+
+        if is_ambiguous:
+            cands = gps_resolve_info.get("ambiguous_candidates", [])
+            cand_str = ", ".join(cands)
+            st.html(f"""<div class='med-alert-warn' style='font-size:0.78rem; margin-bottom:8px;'>
+⚠️ <strong>AMBIGUOUS GPS LOCATION DETECTED:</strong> Position is within accuracy margin between: <em>{cand_str}</em>. Please manually confirm your campus location below.
+</div>""")
+            default_cand = cands[0] if cands and cands[0] in SUPPORTED_LOCATIONS else SUPPORTED_LOCATIONS[0]
+            default_idx = SUPPORTED_LOCATIONS.index(default_cand)
+            active_env_location = st.selectbox("Confirm Campus Landmark (Ambiguous GPS)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_ambig_env_loc")
+            loc_origin = "Manual Confirmation (Ambiguous GPS)"
+
+        elif is_outside_geofence:
+            dist_m = gps_resolve_info.get("distance_meters", "—")
+            st.html(f"""<div class='med-alert-warn' style='font-size:0.78rem; margin-bottom:8px;'>
+⚠️ <strong>OUTSIDE CAMPUS GEOFENCE:</strong> Position is {dist_m}m away, exceeding 350m campus boundary. Please manually select a campus location below.
+</div>""")
+            active_env_location = st.selectbox("Campus Landmark (Manual Fallback)", SUPPORTED_LOCATIONS, index=0, key="sel_outside_env_loc")
+            loc_origin = "Manual Selection (Outside Geofence)"
+
+        elif has_gps_landmark and gps_resolve_info is not None and gps_resolve_info.get("status") == "RESOLVED_GPS":
+            resolved_gps_loc = gps_resolve_info.get("resolved_location") or gps_resolved_name
+            use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=False, key="cb_manual_env_override")
+            if use_manual_loc:
+                default_idx = SUPPORTED_LOCATIONS.index(resolved_gps_loc) if resolved_gps_loc in SUPPORTED_LOCATIONS else 0
+                active_env_location = st.selectbox("Campus Landmark (Manual Override)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_manual_env_loc")
+                loc_origin = "Manual Selection (Override)"
+            else:
+                active_env_location = resolved_gps_loc
+                loc_origin = "Live GPS Resolved"
+        elif has_gps_landmark:
             use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=False, key="cb_manual_env_override")
             if use_manual_loc:
                 default_idx = SUPPORTED_LOCATIONS.index(gps_resolved_name) if gps_resolved_name in SUPPORTED_LOCATIONS else 0
@@ -536,7 +639,7 @@ with tab1:
                 active_env_location = gps_resolved_name
                 loc_origin = "Live GPS Resolved"
         else:
-            st.caption("📍 GPS unavailable or outside campus. Select campus location:")
+            st.caption("📍 GPS unavailable or manual mode. Select campus location:")
             active_env_location = st.selectbox("Campus Landmark (Manual Fallback)", SUPPORTED_LOCATIONS, index=0, key="sel_manual_env_loc_fallback")
             loc_origin = "Manual Selection (GPS Unavailable)"
 
@@ -555,11 +658,12 @@ with tab1:
                 "message": f"Environmental inference pipeline error: {str(e)}",
                 "crowd_prediction": {"category": "UNKNOWN", "confidence_pct": 0.0, "model_name": "Unavailable"},
                 "lighting_prediction": {"category": "UNKNOWN", "confidence_pct": 0.0, "model_name": "Unavailable", "lux_estimate": None},
-                "calibrated_environmental_score": 0.20
+                "environmental_context_score": None,
+                "calibrated_environmental_score": None
             }
 
-        if env_pred.get("status") == "SUCCESS":
-            st.session_state["env_score"] = env_pred["calibrated_environmental_score"]
+        if env_pred.get("status") == "SUCCESS" and env_pred.get("environmental_context_score") is not None:
+            st.session_state["env_score"] = env_pred["environmental_context_score"]
 
             crowd_res = env_pred["crowd_prediction"]
             light_res = env_pred["lighting_prediction"]
@@ -597,7 +701,7 @@ with tab1:
   <strong>NOT LIVE SENSOR MEASUREMENT.</strong> Actual campus crowd and lighting conditions may differ from predictions.
 </div>""")
         else:
-            st.session_state["env_score"] = env_pred.get("calibrated_environmental_score", 0.20)
+            st.session_state["env_score"] = None
             crowd_res = env_pred.get("crowd_prediction", {})
             light_res = env_pred.get("lighting_prediction", {})
             crowd_cat = crowd_res.get("category", "UNKNOWN")
@@ -628,7 +732,7 @@ with tab1:
 
 <div class='med-alert-warn' style='font-size:0.75rem; margin-top:8px; padding:6px 10px; line-height:1.3;'>
   ⚠️ <strong>CONTEXT STATUS UNKNOWN:</strong> {warn_msg}<br>
-  No values fabricated. Modality assigned neutral default index (20.0%).
+  No neutral values are silently substituted. Complete 3-branch index is unavailable. The engine evaluates a Partial Dual-Branch Context Index (Physiological + Spatial only).
 </div>""")
 
         # Auto-update threat fusion if previously analyzed
@@ -644,11 +748,18 @@ with tab1:
             except Exception as e:
                 print(f"[app/main.py] Warning: Auto-update fusion failed: {e}", flush=True)
 
-        env_pct = int(round(st.session_state["env_score"] * 100))
-        env_badge_cls = "score-danger" if env_pct > 65 else ("score-warn" if env_pct > 35 else "score-safe")
+        if st.session_state["env_score"] is not None:
+            env_pct = int(round(st.session_state["env_score"] * 100))
+            env_badge_cls = "score-danger" if env_pct > 65 else ("score-warn" if env_pct > 35 else "score-safe")
+            score_inner = f"<div class='med-score-badge {env_badge_cls}'>{env_pct}%</div>"
+            score_lbl = "Environment Vulnerability Score"
+        else:
+            score_inner = "<div class='med-score-badge score-warn' style='font-size:0.85rem;'>UNKNOWN</div>"
+            score_lbl = "Environment Vulnerability Score (Unavailable)"
+
         st.html(f"""<div class="med-score-box">
-  <div class="med-score-label">Environment Vulnerability Score</div>
-  <div class="med-score-badge {env_badge_cls}">{env_pct}%</div>
+  <div class="med-score-label">{score_lbl}</div>
+  {score_inner}
 </div>""")
 
     st.html("<br>")

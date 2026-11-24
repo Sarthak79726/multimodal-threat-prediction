@@ -32,6 +32,7 @@ from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     confusion_matrix, classification_report, mean_squared_error, mean_absolute_error, r2_score
 )
+from sklearn.utils.class_weight import compute_sample_weight
 
 _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
@@ -123,11 +124,13 @@ def train_and_evaluate_environmental_models() -> Dict[str, Any]:
     y_val_crowd = np.array([class_to_idx_crowd[val] for val in df_val[target_col_crowd]])
     y_test_crowd = np.array([class_to_idx_crowd[val] for val in df_test[target_col_crowd]])
 
+    crowd_sample_weights = compute_sample_weight("balanced", y_train_crowd)
+
     crowd_candidate_models = {
         "Dummy Classifier": DummyClassifier(strategy="most_frequent"),
-        "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
-        "Random Forest": RandomForestClassifier(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1),
-        "Gradient Boosting (XGBoost)": XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.1, random_state=42, eval_metric="mlogloss")
+        "Logistic Regression (Balanced)": LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42),
+        "Random Forest (Balanced)": RandomForestClassifier(n_estimators=100, max_depth=12, class_weight="balanced", random_state=42, n_jobs=-1),
+        "Gradient Boosting (XGBoost Balanced)": XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.1, random_state=42, eval_metric="mlogloss")
     }
 
     crowd_results = []
@@ -137,7 +140,10 @@ def train_and_evaluate_environmental_models() -> Dict[str, Any]:
 
     for name, model in crowd_candidate_models.items():
         print(f"--> Training Model A Candidate: {name}...")
-        model.fit(X_train, y_train_crowd)
+        if "XGBoost" in name:
+            model.fit(X_train, y_train_crowd, sample_weight=crowd_sample_weights)
+        else:
+            model.fit(X_train, y_train_crowd)
         fitted_crowd_models[name] = model
 
         # Val evaluation

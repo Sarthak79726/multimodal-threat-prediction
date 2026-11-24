@@ -114,7 +114,7 @@ class MultimodalThreatPredictor:
         lighting_condition: str = "Light",
         crowd_density: str = "Medium"
     ) -> float:
-        """Computes calibrated continuous environmental risk score from situational factors."""
+        """Computes situational environmental context risk score from situational factors."""
         if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "predict_score"):
             try:
                 return self.env_engine.predict_score(
@@ -136,7 +136,7 @@ class MultimodalThreatPredictor:
         """
         Executes automatic AI environmental prediction for crowd and lighting conditions.
         Returns full prediction payload including categories, model names, confidence,
-        and continuous calibrated scores.
+        and situational environmental context scores.
         Handles engine unavailability or errors defensively without crashing.
         """
         if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "predict_environment"):
@@ -147,8 +147,8 @@ class MultimodalThreatPredictor:
                     day_of_week=day_of_week,
                     weekend_indicator=is_weekend
                 )
-                self._last_crowd_score = res.get("environmental_crowd_context_score", 0.15)
-                self._last_lighting_score = res.get("environmental_lighting_context_score", 0.18)
+                self._last_crowd_score = res.get("environmental_crowd_context_score")
+                self._last_lighting_score = res.get("environmental_lighting_context_score")
                 return res
             except Exception as e:
                 print(f"[MultimodalThreatPredictor] predict_environment failed: {e}", flush=True)
@@ -159,8 +159,8 @@ class MultimodalThreatPredictor:
         effective_day = day_of_week or time_info["day_of_week"]
         effective_wknd = is_weekend if is_weekend is not None else time_info["is_weekend"]
 
-        self._last_crowd_score = 0.20
-        self._last_lighting_score = 0.20
+        self._last_crowd_score = None
+        self._last_lighting_score = None
 
         return {
             "status": "UNAVAILABLE",
@@ -186,32 +186,141 @@ class MultimodalThreatPredictor:
                 "lux_estimate": None,
                 "status": "ENGINE_UNAVAILABLE"
             },
-            "environmental_crowd_context_score": 0.20,
-            "environmental_lighting_context_score": 0.20,
-            "calibrated_environmental_score": 0.20,
+            "environmental_crowd_context_score": None,
+            "environmental_lighting_context_score": None,
+            "environmental_context_score": None,
+            "calibrated_environmental_score": None,
             "is_trained_ml": False,
             "synthetic_provenance": "NONE",
-            "warning": "Environmental models unavailable. Displaying UNKNOWN context status without fabricated values."
+            "warning": "Environmental models unavailable. Output marked UNKNOWN without silent neutral substitution."
         }
 
     def predict_fusion(
         self,
         physiological_stress_score: float,
         location_risk_score: float,
-        environment_risk_score: float,
+        environment_risk_score: Optional[float] = None,
         threshold: float = 0.50,
         weight_physio: float = 0.40,
         weight_location: float = 0.25,
         weight_environment: float = 0.35
     ) -> Dict[str, Any]:
         """
-        Combines 3 input modality risk scores.
-        If a valid trained Stacking Meta-Learner exists, computes learned meta-model probability.
-        Simultaneously computes the Weighted Late Fusion Baseline for explicit benchmark comparison.
+        Combines input modality risk scores.
+        When all 3 branches (Physiological, Spatial, Environmental) are provided:
+          - Computes full 3-branch weighted baseline context index (or Level 1 Stacking Meta-Learner if production-eligible).
+        When the Environmental branch is missing / unknown (environment_risk_score is None):
+          - Eliminates silent substitution.
+          - Computes an explicit PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY).
+          - Formula: R_partial = (0.40 * P + 0.25 * L) / 0.65.
+          - Sets experimental_context_index to None to signify the 3-branch index is incomplete.
         """
-        # Normalize inputs to [0.0, 1.0]
+        # Normalize biometric and spatial inputs to [0.0, 1.0]
         phys_norm = float(np.clip(physiological_stress_score, 0.0, 1.0))
         loc_norm = float(np.clip(location_risk_score, 0.0, 1.0))
+
+        # Check whether environmental modality is available
+        is_env_available = (
+            environment_risk_score is not None
+            and not (isinstance(environment_risk_score, float) and np.isnan(environment_risk_score))
+        )
+
+        modalities_metadata = {
+            "physiological": self.physio_engine.get_metadata() if hasattr(self, "physio_engine") and self.physio_engine is not None else {},
+            "spatial": self.spatial_engine.get_metadata() if hasattr(self, "spatial_engine") and self.spatial_engine is not None else {},
+            "environmental": self.env_engine.get_metadata() if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "get_metadata") else {
+                "branch": "Environmental",
+                "status": "UNAVAILABLE",
+                "is_trained_ml": False,
+                "disclaimer": "EnvironmentalContextEngine is unavailable."
+            }
+        }
+
+        # -----------------------------------------------------------------
+        # BRANCH A: PARTIAL DUAL-BRANCH CONTEXT INDEX (ENV IS MISSING/UNKNOWN)
+        # -----------------------------------------------------------------
+        if not is_env_available:
+            w_p_raw = float(weight_physio)
+            w_l_raw = float(weight_location)
+            dual_sum = w_p_raw + w_l_raw
+            if dual_sum > 0:
+                w_p_partial = w_p_raw / dual_sum
+                w_l_partial = w_l_raw / dual_sum
+            else:
+                w_p_partial, w_l_partial = 0.40 / 0.65, 0.25 / 0.65
+
+            contrib_p = w_p_partial * phys_norm
+            contrib_l = w_l_partial * loc_norm
+            partial_score = round(contrib_p + contrib_l, 4)
+            partial_pct = round(partial_score * 100.0, 2)
+
+            if partial_score <= config.RISK_THRESHOLDS["LOW_MAX"]:
+                partial_status = "STANDARD CONTEXT"
+            elif partial_score <= config.RISK_THRESHOLDS["MEDIUM_MAX"]:
+                partial_status = "ELEVATED CONTEXT"
+            else:
+                partial_status = "HIGH CONTEXT"
+
+            explanation = self._generate_partial_explanation(
+                partial_pct, partial_status, phys_norm, loc_norm
+            )
+
+            return {
+                "fusion_mode": "PARTIAL_DUAL_BRANCH",
+                "available_modalities": ["physiological", "spatial"],
+                "missing_modalities": ["environmental"],
+                # Base model scores
+                "physiological_stress_score": phys_norm,
+                "location_risk_score": loc_norm,
+                "environment_risk_score": None,
+                "environmental_context_score": None,
+                "environmental_crowd_context_score": None,
+                "environmental_lighting_context_score": None,
+                "environmental_model_provenance": "MISSING / UNKNOWN (Excluded from fusion)",
+                "modalities_metadata": modalities_metadata,
+                # Partial Dual-Branch Specifics
+                "partial_dual_branch_index": partial_score,
+                "partial_dual_branch_index_pct": partial_pct,
+                "partial_fusion_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
+                "partial_formula": "R_partial = (0.40 * P + 0.25 * L) / 0.65",
+                "partial_weights": {
+                    "physiological": round(w_p_partial, 4),
+                    "location": round(w_l_partial, 4)
+                },
+                "partial_contributions": {
+                    "physiological": round(contrib_p, 4),
+                    "location": round(contrib_l, 4)
+                },
+                "partial_contributions_pct": {
+                    "physiological": round(contrib_p * 100.0, 2),
+                    "location": round(contrib_l * 100.0, 2)
+                },
+                # Complete 3-branch index is explicitly None
+                "experimental_context_index": None,
+                "experimental_context_index_pct": None,
+                "threat_probability": partial_score,
+                "threat_score_pct": partial_pct,
+                "threat_status": partial_status,
+                "context_status": partial_status,
+                "context_classification": partial_status,
+                "active_model_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
+                "is_meta_learner_trained": False,
+                "meta_model_status": "NOT EVALUATED (MISSING ENVIRONMENTAL MODALITY)",
+                "notice": "A complete 3-branch context index is unavailable because environmental context is missing or unknown. Operating in fallback dual-branch mode.",
+                "clarification": "This partial index evaluates physiological biometrics and spatial location only. Environmental conditions (lighting, crowd density) are excluded.",
+                "stacking_meta_probability": None,
+                "stacking_meta_status": None,
+                "stacking_explainability": None,
+                "baseline_threat_probability": partial_score,
+                "baseline_threat_score_pct": partial_pct,
+                "baseline_status": partial_status,
+                "threshold_used": threshold,
+                "explanation": explanation
+            }
+
+        # -----------------------------------------------------------------
+        # BRANCH B: THREE-BRANCH CONTEXT FUSION (ALL 3 INPUTS PRESENT)
+        # -----------------------------------------------------------------
         env_norm = float(np.clip(environment_risk_score, 0.0, 1.0))
 
         # 1. Baseline Weighted late fusion
@@ -228,8 +337,8 @@ class MultimodalThreatPredictor:
         contrib_l = w_l_norm * loc_norm
         contrib_e = w_e_norm * env_norm
 
-        baseline_score = contrib_p + contrib_l + contrib_e
-        baseline_pct = baseline_score * 100.0
+        baseline_score = round(contrib_p + contrib_l + contrib_e, 4)
+        baseline_pct = round(baseline_score * 100.0, 2)
 
         # Neutral heuristic classification using configured project thresholds
         if baseline_score <= config.RISK_THRESHOLDS["LOW_MAX"]:
@@ -272,25 +381,20 @@ class MultimodalThreatPredictor:
             stacking_explain = None
 
         return {
+            "fusion_mode": "THREE_BRANCH_FUSION",
+            "available_modalities": ["physiological", "spatial", "environmental"],
+            "missing_modalities": [],
             # Base model scores
             "physiological_stress_score": phys_norm,
             "location_risk_score": loc_norm,
             "environment_risk_score": env_norm,
+            "environmental_context_score": env_norm,
             # Explicit environmental branch outputs
             "environmental_crowd_context_score": getattr(self, "_last_crowd_score", 0.15),
             "environmental_lighting_context_score": getattr(self, "_last_lighting_score", 0.18),
             "environmental_model_provenance": "SYNTHETIC-DATA TRAINED MODEL (EXPERIMENTAL PREDICTION)",
             # Provenance flags
-            "modalities_metadata": {
-                "physiological": self.physio_engine.get_metadata() if hasattr(self, "physio_engine") and self.physio_engine is not None else {},
-                "spatial": self.spatial_engine.get_metadata() if hasattr(self, "spatial_engine") and self.spatial_engine is not None else {},
-                "environmental": self.env_engine.get_metadata() if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "get_metadata") else {
-                    "branch": "Environmental",
-                    "status": "UNAVAILABLE",
-                    "is_trained_ml": False,
-                    "disclaimer": "EnvironmentalContextEngine is unavailable."
-                }
-            },
+            "modalities_metadata": modalities_metadata,
             # Active decision (either stacking or baseline)
             "threat_probability": active_score,
             "threat_score_pct": active_score_pct,
@@ -302,6 +406,8 @@ class MultimodalThreatPredictor:
             "meta_model_status": meta_model_status,
             "experimental_context_index": active_score,
             "experimental_context_index_pct": active_score_pct,
+            "partial_dual_branch_index": None,
+            "partial_dual_branch_index_pct": None,
             "notice": "A validated multimodal threat-prediction model is not currently available because synchronized observations and independently verified outcome labels have not yet been collected.",
             "clarification": "This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.",
             # Stacking Meta-Learner details
@@ -330,6 +436,22 @@ class MultimodalThreatPredictor:
             "threshold_used": threshold,
             "explanation": explanation
         }
+
+    def _generate_partial_explanation(
+        self,
+        final_pct: float,
+        status: str,
+        phys_norm: float,
+        loc_norm: float
+    ) -> str:
+        phys_pct = phys_norm * 100.0
+        loc_pct = loc_norm * 100.0
+        return (
+            f"Partial Context Assessment: The partial dual-branch context index is {final_pct:.2f}% ({status}). "
+            f"It combines physiological stress ({phys_pct:.1f}%, 61.54% re-normalized weight) and location context risk ({loc_pct:.1f}%, 38.46% re-normalized weight). "
+            f"Environmental context is UNKNOWN/unavailable and is omitted without silent substitution. "
+            f"Limitations: Situational illumination and crowd density are not factored into this partial index. It describes contextual inputs only and is not a validated threat prediction."
+        )
 
     def _generate_stacking_explanation(
         self,

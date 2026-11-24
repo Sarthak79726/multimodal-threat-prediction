@@ -1,6 +1,6 @@
 # Environmental Context AI Models Evaluation Report
 
-**Generated:** 2026-11-24 16:16:34  
+**Generated:** 2026-11-24 18:05:42  
 **Status:** EXPERIMENTAL PREDICTION MODELS (TRAINED ON SYNTHETIC DATA)  
 **Warning:** SYNTHETIC-DATA TRAINED MODEL — NOT LIVE SENSOR MEASUREMENTS  
 
@@ -19,29 +19,53 @@
 | Model | Val_Accuracy | Val_Macro_Precision | Val_Macro_Recall | Val_Macro_F1 | Test_Accuracy | Test_Macro_Precision | Test_Macro_Recall | Test_Macro_F1 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Dummy Classifier | 0.4858 | 0.1619 | 0.3333 | 0.218 | 0.4806 | 0.1602 | 0.3333 | 0.2164 |
-| Logistic Regression | 0.5978 | 0.3961 | 0.4893 | 0.4355 | 0.5964 | 0.3946 | 0.4884 | 0.4339 |
-| Random Forest | 0.7371 | 0.6482 | 0.6201 | 0.558 | 0.7272 | 0.6314 | 0.6118 | 0.5501 |
-| Gradient Boosting (XGBoost) | 0.737 | 0.6515 | 0.6264 | 0.5782 | 0.7267 | 0.6436 | 0.6176 | 0.5702 |
+| Logistic Regression (Balanced) | 0.4464 | 0.4315 | 0.4368 | 0.4184 | 0.4422 | 0.4245 | 0.4294 | 0.4125 |
+| Random Forest (Balanced) | 0.719 | 0.6513 | 0.6534 | 0.6468 | 0.7191 | 0.6566 | 0.6545 | 0.6499 |
+| Gradient Boosting (XGBoost Balanced) | 0.7126 | 0.6668 | 0.6758 | 0.6706 | 0.7132 | 0.6693 | 0.6761 | 0.6722 |
 
-**Selected Model:** `Gradient Boosting (XGBoost)`  
+**Selected Model:** `Gradient Boosting (XGBoost Balanced)`  
 **Test Confusion Matrix (Rows=True, Cols=Pred: Low, Medium, High):**
 
 ```
-[[3156   37  508]
- [ 733  119 1804]
- [ 149  114 5620]]
+[[3112  293  296]
+ [ 715 1126  815]
+ [ 141 1250 4492]]
 ```
 
 ### Per-Class Test Performance (Model A)
 
 | index | precision | recall | f1-score | support |
 | --- | --- | --- | --- | --- |
-| Low | 0.7815750371471025 | 0.8527425020264793 | 0.8156092518413232 | 3701.0 |
-| Medium | 0.44074074074074077 | 0.04480421686746988 | 0.08133971291866028 | 2656.0 |
-| High | 0.708522440746344 | 0.9552949175590685 | 0.813608396670286 | 5883.0 |
-| accuracy | 0.7267156862745098 | 0.7267156862745098 | 0.7267156862745098 | 0.7267156862745098 |
-| macro avg | 0.6436127395447291 | 0.6176138788176725 | 0.5701857871434232 | 12240.0 |
-| weighted avg | 0.6725044231045404 | 0.7267156862745098 | 0.6553158755055548 | 12240.0 |
+| Low | 0.7842741935483871 | 0.8408538232910024 | 0.811579084626418 | 3701.0 |
+| Medium | 0.421880854252529 | 0.4239457831325301 | 0.4229107981220657 | 2656.0 |
+| High | 0.8017133678386579 | 0.7635560088390277 | 0.7821695977711998 | 5883.0 |
+| accuracy | 0.7132352941176471 | 0.7132352941176471 | 0.7132352941176471 | 0.7132352941176471 |
+| macro avg | 0.669289471879858 | 0.6761185384208535 | 0.6722198268398945 | 12240.0 |
+| weighted avg | 0.7140191243637355 | 0.7132352941176471 | 0.7131053117404043 | 12240.0 |
+
+### 2.1 Crowd Classification — Medium Class Performance & Generator Rule Investigation
+
+#### Root Cause Analysis
+An in-depth inspection of the synthetic dataset generation pipeline (`src/environment/generate_synthetic_dataset.py`) revealed why standard unweighted classifiers exhibited poor recall on the `Medium` crowd density class (~4.48%, identifying only 119 out of 2,656 test records):
+1. **Absence of Modal Target Status:** Across all 17 BIT Mesra campus landmarks, 24 diurnal hours, and weekday/weekend schedules, the synthetic generation rules assign either `High` (e.g. academic peak hours, hostel evenings) or `Low` (e.g. late night, remote zones) as the baseline modal target.
+2. **Transition Perturbation Artifact:** The `Medium` category was generated solely as a transition perturbation with probabilities $P \le 0.42$ (e.g., $10\%$, $15\%$, $30\%$, or $42\%$). Consequently, for any unique feature vector $\mathbf{x} = (\text{location}, \text{hour}, \text{dow}, \text{weekend})$, `Medium` was never the majority class.
+3. **Loss Minimization Suppression:** Standard gradient boosting and tree classifiers minimizing unweighted cross-entropy loss naturally learn to predict the conditional mode (`High` or `Low`), effectively suppressing the minority transition class.
+
+#### Scientifically Justified Correction: Cost-Sensitive Balanced Sample Weighting
+Rather than modifying the test set or fabricating artificial records (which would compromise academic integrity), we implemented cost-sensitive balanced sample weighting:
+$$w_c = \frac{N}{C \cdot N_c}$$
+computed on the training split using `sklearn.utils.class_weight.compute_sample_weight('balanced', y_train)`.
+
+#### Comparative Evaluation Results:
+- **Unweighted Baseline XGBoost:**
+  - Test Macro F1: `0.5702`
+  - Medium Recall: `4.48%` (119 / 2,656 correct)
+  - Validation Macro F1: `0.5782`
+- **Balanced Sample-Weighted XGBoost (Selected Model):**
+  - Test Macro F1: `0.6722` (+10.2 percentage points)
+  - Medium Recall: `42.39%` (1,126 / 2,656 correct, **~9.5× improvement**)
+  - Test Accuracy: `71.32%` (maintained high overall accuracy)
+  - Validation Macro F1: `0.6706` (consistent with test performance, verifying genuine stability without overfitting)
 
 ## 3. Model B: Lighting Condition Prediction Comparison
 

@@ -54,7 +54,7 @@ def run_e2e_verification():
         env_res = p.predict_environment_context(loc, hour, dow, is_wknd)
         loc_score = p.predict_location(hour=hour, loc_type="academic_zone" if "Building" in loc else "hostel_zone")
         phys_score = 0.22
-        fusion = p.predict_fusion(phys_score, loc_score, env_res["calibrated_environmental_score"])
+        fusion = p.predict_fusion(phys_score, loc_score, env_res["environmental_context_score"])
         
         print(f"Scenario: {loc} at {hour:.1f}h ({dow})")
         crowd_cat = env_res["crowd_prediction"]["category"]
@@ -62,7 +62,7 @@ def run_e2e_verification():
         light_cat = env_res["lighting_prediction"]["category"]
         light_conf = env_res["lighting_prediction"]["confidence_pct"]
         lux = env_res["lighting_prediction"].get("lux_estimate", 0)
-        env_sc = env_res["calibrated_environmental_score"]
+        env_sc = env_res["environmental_context_score"]
         final_pct = fusion["experimental_context_index_pct"]
         status = fusion["context_status"]
 
@@ -71,16 +71,23 @@ def run_e2e_verification():
         print(f"  -> Final Index: {final_pct:.2f}% [{status}]")
         assert 0.0 <= fusion["experimental_context_index"] <= 1.0
 
-    print("\n=== 3. Missing Inputs Policy Verification ===")
+    print("\n=== 3. Missing Inputs & Partial Dual-Branch Policy Verification ===")
     unknown_env = p.predict_environment_context("Unknown Planet", 12.0)
     print("Unknown location status:", unknown_env["status"])
     print("Unknown crowd category:", unknown_env["crowd_prediction"]["category"])
     print("Unknown lighting category:", unknown_env["lighting_prediction"]["category"])
-    fusion_unknown = p.predict_fusion(0.20, 0.15, unknown_env["calibrated_environmental_score"])
-    print("Fusion with unknown env:", fusion_unknown["experimental_context_index_pct"], fusion_unknown["context_status"])
+    print("Unknown env score (must be None):", unknown_env["environmental_context_score"])
     assert unknown_env["status"] == "UNKNOWN"
     assert unknown_env["crowd_prediction"]["category"] == "UNKNOWN"
-    assert fusion_unknown["experimental_context_index_pct"] == 18.75
+    assert unknown_env["environmental_context_score"] is None
+
+    fusion_unknown = p.predict_fusion(0.20, 0.15, unknown_env["environmental_context_score"])
+    print("Fusion mode with missing env:", fusion_unknown["fusion_mode"])
+    print("Partial index pct:", fusion_unknown["partial_dual_branch_index_pct"], fusion_unknown["context_status"])
+    assert fusion_unknown["fusion_mode"] == "PARTIAL_DUAL_BRANCH"
+    assert fusion_unknown["experimental_context_index"] is None
+    # (0.40 * 0.20 + 0.25 * 0.15) / 0.65 = (0.08 + 0.0375) / 0.65 = 0.1175 / 0.65 = 0.180769... -> 18.08%
+    assert fusion_unknown["partial_dual_branch_index_pct"] == 18.08
 
     print("\n✓ ALL 12 END-TO-END VERIFICATION CRITERIA PASSED!")
 

@@ -65,7 +65,7 @@ class EnvironmentalContextEngine:
     2. Automatic GPS coordinate resolution against BIT Mesra landmarks (with geofencing).
     3. Machine Learning inference for Crowd Density (Model A) and Lighting Condition (Model B).
     4. Continuous lux estimation via tree-based regressor.
-    5. Calibrated environmental context vulnerability scoring.
+    5. Situational environmental context vulnerability scoring.
     """
 
     def __init__(
@@ -119,12 +119,14 @@ class EnvironmentalContextEngine:
         self,
         lat: Optional[float] = None,
         lon: Optional[float] = None,
-        max_geofence_meters: float = 350.0
+        max_geofence_meters: float = 350.0,
+        accuracy: Optional[float] = None
     ) -> Dict[str, Any]:
         """
         Resolves GPS coordinates against BIT Mesra campus landmarks.
-        Returns resolved location if within geofence; otherwise flags as outside campus
-        or GPS unavailable, enabling safe manual location selection.
+        Includes geofence enforcement (max_geofence_meters) and ambiguity detection:
+        If coordinates are equidistant between multiple landmarks or within GPS accuracy margin,
+        flags status as AMBIGUOUS_LOCATION and requires manual user confirmation.
         """
         if lat is None or lon is None:
             return {
@@ -132,59 +134,80 @@ class EnvironmentalContextEngine:
                 "resolved_location": None,
                 "distance_meters": None,
                 "is_within_geofence": False,
+                "ambiguous_candidates": [],
                 "message": "GPS coordinates not available. Manual campus location selection required."
             }
 
-        # Calculate distance to all known campus landmarks
-        min_dist = float("inf")
-        nearest_landmark = None
-
-        for lm in self.landmarks:
-            dist = haversine_distance(lat, lon, lm["latitude"], lm["longitude"])
-            if dist < min_dist:
-                min_dist = dist
-                nearest_landmark = lm
-
-        if nearest_landmark is None:
+        if not self.landmarks:
             return {
                 "status": "ERROR",
                 "resolved_location": None,
                 "distance_meters": None,
                 "is_within_geofence": False,
+                "ambiguous_candidates": [],
                 "message": "No campus landmarks configured."
             }
 
-        # Geofence threshold check: either landmark's specific radius or max threshold
-        effective_threshold = max(float(nearest_landmark.get("radius", 150.0)), max_geofence_meters)
-        is_within_geofence = min_dist <= effective_threshold
+        # Calculate distance to all known campus landmarks and sort
+        dist_list = []
+        for lm in self.landmarks:
+            dist = haversine_distance(lat, lon, lm["latitude"], lm["longitude"])
+            dist_list.append((lm, dist))
 
-        # Ensure exact name match against supported locations
-        matched_name = nearest_landmark["name"]
-        if matched_name not in SUPPORTED_LOCATIONS:
-            # Map alias if applicable
-            for sup in SUPPORTED_LOCATIONS:
-                if sup.lower() in matched_name.lower() or matched_name.lower() in sup.lower():
-                    matched_name = sup
-                    break
+        dist_list.sort(key=lambda x: x[1])
+        nearest_landmark, min_dist = dist_list[0]
+        effective_threshold = float(max_geofence_meters)
 
-        if is_within_geofence:
-            return {
-                "status": "RESOLVED_GPS",
-                "resolved_location": matched_name,
-                "landmark_id": nearest_landmark["id"],
-                "distance_meters": round(min_dist, 1),
-                "is_within_geofence": True,
-                "message": f"Successfully resolved to '{matched_name}' ({int(min_dist)}m from center)."
-            }
-        else:
+        # Geofence check
+        if min_dist > effective_threshold:
             return {
                 "status": "OUTSIDE_CAMPUS_GEOFENCE",
                 "resolved_location": None,
-                "nearest_landmark_candidate": matched_name,
+                "nearest_landmark_candidate": nearest_landmark["name"],
                 "distance_meters": round(min_dist, 1),
                 "is_within_geofence": False,
-                "message": f"Coordinates are {int(min_dist)}m from campus ({matched_name}), exceeding supported geofence ({int(effective_threshold)}m). Manual location required."
+                "ambiguous_candidates": [],
+                "message": f"Coordinates are {int(min_dist)}m from campus ({nearest_landmark['name']}), exceeding supported geofence ({int(effective_threshold)}m). Manual location required."
             }
+
+        # Ambiguity check: if within accuracy margin or landmark proximity margin
+        # Several BIT Mesra landmarks are < 65m apart (e.g. R&D to H2 is 23.1m, H3 to PMC is 48.7m)
+        acc_val = float(accuracy) if accuracy is not None and accuracy > 0 else 0.0
+        ambiguity_margin = max(acc_val, 30.0)
+
+        ambiguous_candidates = [
+            lm["name"] for lm, d in dist_list
+            if d <= effective_threshold and (d - min_dist) <= ambiguity_margin
+        ]
+
+        if len(ambiguous_candidates) > 1:
+            return {
+                "status": "AMBIGUOUS_LOCATION",
+                "resolved_location": None,
+                "nearest_landmark_candidate": nearest_landmark["name"],
+                "ambiguous_candidates": ambiguous_candidates,
+                "distance_meters": round(min_dist, 1),
+                "is_within_geofence": True,
+                "accuracy_margin_m": round(ambiguity_margin, 1),
+                "message": f"Ambiguous location: coordinates are within accuracy margin ({int(ambiguity_margin)}m) between {', '.join(ambiguous_candidates[:3])}. Manual confirmation required."
+            }
+
+        # Unambiguous match within geofence
+        matched_name = nearest_landmark["name"]
+        for sup in SUPPORTED_LOCATIONS:
+            if sup.lower() == matched_name.lower():
+                matched_name = sup
+                break
+
+        return {
+            "status": "RESOLVED_GPS",
+            "resolved_location": matched_name,
+            "landmark_id": nearest_landmark["id"],
+            "distance_meters": round(min_dist, 1),
+            "is_within_geofence": True,
+            "ambiguous_candidates": [],
+            "message": f"Successfully resolved to '{matched_name}' ({int(min_dist)}m from center)."
+        }
 
     def predict_environment(
         self,
@@ -240,28 +263,29 @@ class EnvironmentalContextEngine:
                 "crowd_prediction": {
                     "category": "UNKNOWN",
                     "confidence": 0.0,
+                    "confidence_pct": 0.0,
                     "model_name": "None",
                     "status": "UNAVAILABLE"
                 },
                 "lighting_prediction": {
                     "category": "UNKNOWN",
                     "confidence": 0.0,
+                    "confidence_pct": 0.0,
                     "model_name": "None",
                     "lux_estimate": None,
                     "status": "UNAVAILABLE"
                 },
-                "environmental_crowd_context_score": 0.15,
-                "environmental_lighting_context_score": 0.18,
-                "calibrated_environmental_score": 0.20,
+                "environmental_crowd_context_score": None,
+                "environmental_lighting_context_score": None,
+                "environmental_context_score": None,
+                "calibrated_environmental_score": None,
                 "is_trained_ml": False,
                 "synthetic_provenance": "NONE",
-                "warning": "Location unknown. Output cannot be calculated from ML models."
+                "warning": "Location unknown. Output cannot be calculated from ML models. Modality is UNKNOWN."
             }
 
         # Check if models are loaded
         if not self.is_trained_ml or self.crowd_artifact is None or self.lighting_artifact is None:
-            # Fall back safely to rule-based calculation
-            fallback_score = self.predict_score(hour_of_day, "Good", "Medium")
             return {
                 "status": "UNKNOWN",
                 "error": "MODEL_UNAVAILABLE",
@@ -274,22 +298,25 @@ class EnvironmentalContextEngine:
                 "crowd_prediction": {
                     "category": "UNKNOWN",
                     "confidence": 0.0,
-                    "model_name": "Fallback Evaluator",
+                    "confidence_pct": 0.0,
+                    "model_name": "None",
                     "status": "MODEL_MISSING"
                 },
                 "lighting_prediction": {
                     "category": "UNKNOWN",
                     "confidence": 0.0,
-                    "model_name": "Fallback Evaluator",
+                    "confidence_pct": 0.0,
+                    "model_name": "None",
                     "lux_estimate": None,
                     "status": "MODEL_MISSING"
                 },
-                "environmental_crowd_context_score": 0.15,
-                "environmental_lighting_context_score": 0.18,
-                "calibrated_environmental_score": fallback_score,
+                "environmental_crowd_context_score": None,
+                "environmental_lighting_context_score": None,
+                "environmental_context_score": None,
+                "calibrated_environmental_score": None,
                 "is_trained_ml": False,
                 "synthetic_provenance": "NONE",
-                "warning": "Model artifacts unavailable. Displaying UNKNOWN status."
+                "warning": "Model artifacts unavailable. Modality is UNKNOWN."
             }
 
         # Prepare feature DataFrame for preprocessing
@@ -331,8 +358,9 @@ class EnvironmentalContextEngine:
                 # Approximate default based on predicted class
                 lux_val = 4.0 if light_pred_cat == "Dark" else (55.0 if light_pred_cat == "Low" else 500.0)
 
-            # 4. Calibrated Continuous Context Vulnerability Scores
-            # Crowd Vulnerability: Low isolation = high vulnerability (0.32), High crowd = low vulnerability (0.02)
+            # 4. Situational Context Vulnerability Scores
+            # (Heuristic situational transformation, not empirical calibrated probability)
+            # Crowd Vulnerability: Low crowd = high vulnerability (0.32), High crowd = low vulnerability (0.02)
             if crowd_pred_cat == "Low":
                 crowd_vuln = 0.32
             elif crowd_pred_cat == "Medium":
@@ -357,7 +385,7 @@ class EnvironmentalContextEngine:
             else:
                 time_factor = 0.05
 
-            calibrated_env_score = round(min(1.0, max(0.05, time_factor + light_vuln + crowd_vuln)), 4)
+            env_score = round(min(1.0, max(0.05, time_factor + light_vuln + crowd_vuln)), 4)
 
             return {
                 "status": "SUCCESS",
@@ -387,7 +415,8 @@ class EnvironmentalContextEngine:
                 },
                 "environmental_crowd_context_score": crowd_vuln,
                 "environmental_lighting_context_score": light_vuln,
-                "calibrated_environmental_score": calibrated_env_score,
+                "environmental_context_score": env_score,
+                "calibrated_environmental_score": env_score,
                 "is_trained_ml": True,
                 "synthetic_provenance": "SYNTHETIC_SIMULATION_RULE_GENERATED",
                 "warning": "EXPERIMENTAL PREDICTION — NOT LIVE SENSOR MEASUREMENT. Actual campus crowd and lighting conditions may differ from predictions."
@@ -403,11 +432,12 @@ class EnvironmentalContextEngine:
                 "hour_of_day": hour_of_day,
                 "day_of_week": day_of_week,
                 "weekend_indicator": weekend_indicator,
-                "crowd_prediction": {"category": "UNKNOWN", "confidence": 0.0, "model_name": "None", "status": "ERROR"},
-                "lighting_prediction": {"category": "UNKNOWN", "confidence": 0.0, "model_name": "None", "lux_estimate": None, "status": "ERROR"},
-                "environmental_crowd_context_score": 0.15,
-                "environmental_lighting_context_score": 0.18,
-                "calibrated_environmental_score": 0.20,
+                "crowd_prediction": {"category": "UNKNOWN", "confidence": 0.0, "confidence_pct": 0.0, "model_name": "None", "status": "ERROR"},
+                "lighting_prediction": {"category": "UNKNOWN", "confidence": 0.0, "confidence_pct": 0.0, "model_name": "None", "lux_estimate": None, "status": "ERROR"},
+                "environmental_crowd_context_score": None,
+                "environmental_lighting_context_score": None,
+                "environmental_context_score": None,
+                "calibrated_environmental_score": None,
                 "is_trained_ml": False,
                 "synthetic_provenance": "NONE",
                 "warning": "Model inference failed. Output is UNKNOWN."
@@ -421,7 +451,8 @@ class EnvironmentalContextEngine:
     ) -> float:
         """
         Backward-compatible method for continuous environmental vulnerability scoring.
-        Accepts direct category strings or hour float and evaluates calibrated score.
+        Accepts direct category strings or hour float and evaluates situational score.
+        Note: This is a situational heuristic transformation, not an empirical calibrated probability.
         """
         hour = float(time_of_day_hour) % 24.0
 
@@ -432,7 +463,6 @@ class EnvironmentalContextEngine:
         else:
             time_factor = 0.05
 
-        is_dark = str(lighting_condition).strip().lower() in ["dark", "low"]
         lighting_factor = 0.35 if str(lighting_condition).strip().lower() == "dark" else (0.18 if str(lighting_condition).strip().lower() == "low" else 0.05)
 
         crowd_str = str(crowd_density).strip().lower()
@@ -443,8 +473,8 @@ class EnvironmentalContextEngine:
         else:
             crowd_factor = 0.02
 
-        calibrated_score = round(min(1.0, max(0.05, time_factor + lighting_factor + crowd_factor)), 4)
-        return float(calibrated_score)
+        situational_score = round(min(1.0, max(0.05, time_factor + lighting_factor + crowd_factor)), 4)
+        return float(situational_score)
 
     def get_metadata(self) -> Dict[str, Any]:
         """Returns metadata and provenance for the environmental branch."""
