@@ -59,13 +59,14 @@ class TestEnvironmentalTimeAndFaultTolerance(unittest.TestCase):
 
     def test_timezone_fallback_when_campus_timezone_fails(self):
         """Verifies safe fallback to fixed-offset UTC+05:30 if CAMPUS_TIMEZONE raises or is invalid."""
-        with patch.object(datetime.datetime, "now") as mock_now:
-            # First call raises (simulating zoneinfo issue), second call succeeds with fallback
-            fixed_dt = datetime.datetime(2026, 11, 24, 15, 30, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
-            mock_now.side_effect = [Exception("ZoneInfo database missing"), fixed_dt]
-            
+        with patch.object(config, "CAMPUS_TIMEZONE", "INVALID_TIMEZONE_OBJECT"):
             res = config.get_campus_now()
-            self.assertEqual(res, fixed_dt)
+            self.assertIsNotNone(res.tzinfo)
+            self.assertEqual(res.tzinfo.utcoffset(None), datetime.timedelta(hours=5, minutes=30))
+            
+            time_info = config.get_current_ist_time()
+            self.assertIn("time_str", time_info)
+            self.assertTrue(time_info["time_str"].endswith("IST"))
 
     def test_midnight_boundary_and_date_transition(self):
         """Verifies correct calculation across midnight boundary and weekday/weekend transitions."""
