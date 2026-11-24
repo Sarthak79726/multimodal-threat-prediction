@@ -105,6 +105,36 @@ class TestWESADSubjectSwitching(unittest.TestCase):
             self.assertTrue(entry["alignment_valid"],
                             f"Subject {entry['subject_id']} has mismatched label/signal alignment!")
 
+    def test_meditation_never_fifty_percent_across_subjects(self):
+        """9: Verifies that Meditation stress probability evaluates to authentic Non-Stress (<10%) and NEVER 50%."""
+        audit_path = config.DATA_DIR / "physiological" / "wesad_condition_audit.json"
+        with open(audit_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        for entry in data:
+            s_id = entry["subject_id"]
+            med_info = entry["conditions"]["Meditation"]
+            self.assertTrue(med_info.get("available"), f"Subject {s_id} Meditation must be available")
+            prob = med_info["stress_probability"]
+            # Must not be the fallback 0.50 (50%)
+            self.assertNotEqual(prob, 0.50, f"Subject {s_id} Meditation evaluated to fallback 50%!")
+            # Non-Stress clinical state must have low stress probability (< 10%)
+            self.assertLess(prob, 0.10, f"Subject {s_id} Meditation stress prob must be < 10%, got {prob*100:.2f}%")
+            self.assertEqual(med_info.get("predicted_class"), "NON-STRESS")
+
+    def test_baseline_and_amusement_distinct_telemetry_and_unrounded_display(self):
+        """10: Verifies Baseline and Amusement have distinct unrounded probabilities and telemetry across subjects."""
+        for subj in ["S2", "S3", "S4", "S5"]:
+            base = evaluate_subject_biometrics(subj, "Window 1 (Baseline)")
+            amu = evaluate_subject_biometrics(subj, "Window 3 (Amusement)")
+            self.assertNotEqual(base["fingerprint"], amu["fingerprint"])
+            self.assertNotEqual(base["eda_mean"], amu["eda_mean"])
+            self.assertNotEqual(base["physio_score"], amu["physio_score"],
+                                f"Subject {subj}: Baseline and Amusement unrounded scores must be distinct")
+            # Verify predicted_class is present and classified as NON-STRESS
+            self.assertEqual(base["predicted_class"], "NON-STRESS")
+            self.assertEqual(amu["predicted_class"], "NON-STRESS")
+
 
 class TestStreamlitSubjectSwitchingHeadless(unittest.TestCase):
     """Headless Streamlit AppTest testing reactive subject and condition switching."""
@@ -142,6 +172,17 @@ class TestStreamlitSubjectSwitchingHeadless(unittest.TestCase):
         self.assertEqual(s3_amu_telemetry["condition_name"], "Amusement")
         self.assertNotEqual(s3_amu_telemetry["fingerprint"], s2_amu_telemetry["fingerprint"],
                             "S3 Amusement must have a distinct fingerprint from S2 Amusement")
+
+        # 4. Switch condition to Window 4 (Meditation)
+        at.selectbox(key="sel_physio_window").select("Window 4 (Meditation)")
+        at.run()
+        self.assertFalse(at.exception)
+        s3_med_telemetry = at.session_state["physio_telemetry"]
+        self.assertEqual(s3_med_telemetry["condition_name"], "Meditation")
+        med_score = at.session_state["physio_score"]
+        self.assertNotEqual(med_score, 0.50, "Meditation stress probability must NOT be 50%!")
+        self.assertLess(med_score, 0.10, f"Meditation probability must be < 10%, got {med_score*100:.2f}%")
+        self.assertEqual(s3_med_telemetry["predicted_class"], "NON-STRESS")
 
 
 if __name__ == "__main__":

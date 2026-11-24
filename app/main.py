@@ -362,6 +362,31 @@ def map_session_to_condition(session_option: str) -> str:
         return "Meditation"
     return "Baseline"
 
+def find_best_contiguous_window(labels: np.ndarray, cond_id: int, fs: int = 700, window_sec: float = 60.0):
+    """
+    Identifies the longest contiguous segment for a given experimental condition
+    and selects its central window. This avoids boundary transition artifacts and
+    inter-session gaps (such as split meditation sessions in WESAD).
+    """
+    indices = np.where(labels == cond_id)[0]
+    if len(indices) == 0:
+        return None, 0, 0, 0, 0.0
+    diffs = np.diff(indices)
+    breaks = np.where(diffs > 1)[0]
+    starts = [indices[0]] + [indices[k+1] for k in breaks]
+    ends = [indices[k] for k in breaks] + [indices[-1]]
+    lens = [e - s + 1 for s, e in zip(starts, ends)]
+    best_idx = int(np.argmax(lens))
+    s_best, e_best = starts[best_idx], ends[best_idx]
+    
+    mid = (s_best + e_best) // 2
+    win_samples = int(window_sec * fs)
+    start_idx = max(s_best, mid - win_samples // 2)
+    end_idx = min(len(labels), start_idx + win_samples)
+    start_sec = start_idx / fs
+    total_cond_sec = len(indices) / fs
+    return start_sec, start_idx, end_idx, len(indices), total_cond_sec
+
 @st.cache_data(show_spinner=False)
 def evaluate_subject_biometrics(subject_id: str, session_option: str) -> dict:
     """
@@ -404,15 +429,11 @@ def evaluate_subject_biometrics(subject_id: str, session_option: str) -> dict:
 
             cond_map = {"Baseline": 1, "Stress": 2, "Amusement": 3, "Meditation": 4}
             cond_id = cond_map.get(cond_name, 1)
-            indices = np.where(labels == cond_id)[0]
+            start_sec, start_idx, end_idx, count, total_cond_sec = find_best_contiguous_window(
+                labels, cond_id, fs_chest, 60.0
+            )
 
-            if len(indices) > 0:
-                # Middle 60-second window to prevent boundary transition artifacts
-                mid_idx = indices[len(indices) // 2]
-                start_sec = max(0.0, (mid_idx - 30 * fs_chest) / fs_chest)
-                start_idx = int(start_sec * fs_chest)
-                end_idx = min(total_samples, start_idx + int(60.0 * fs_chest))
-
+            if start_sec is not None:
                 c_ecg = chest['ECG'][start_idx:end_idx].ravel()
                 c_eda = chest['EDA'][start_idx:end_idx].ravel()
                 c_temp = chest['Temp'][start_idx:end_idx].ravel()
@@ -439,8 +460,8 @@ def evaluate_subject_biometrics(subject_id: str, session_option: str) -> dict:
                 ecg_preview = [round(float(v), 4) for v in c_ecg[::ecg_step][:300]]
                 eda_preview = [round(float(v), 4) for v in c_eda[::eda_step][:150]]
 
-                sample_count = len(indices)
-                condition_duration_sec = round(len(indices) / fs_chest, 1)
+                sample_count = count
+                condition_duration_sec = round(total_cond_sec, 1)
 
                 extracted_feats, _ = extract_window_features(subject_id, chest, wrist, labels, start_sec=start_sec, window_sec=60.0)
                 if extracted_feats is not None:
@@ -486,12 +507,14 @@ def evaluate_subject_biometrics(subject_id: str, session_option: str) -> dict:
 
     est_bpm = int(round(65.0 + (score * 40.0) + (min(10.0, eda_val or 1.0) * 1.5)))
     est_bpm = max(55, min(145, est_bpm))
+    pred_class = "STRESS" if score >= 0.50 else "NON-STRESS"
 
     return {
         "subject_id": subject_id,
         "session_option": session_option,
         "condition_name": cond_name,
         "physio_score": score,
+        "predicted_class": pred_class,
         "eda_mean": round(eda_val, 2) if eda_val is not None else 0.0,
         "temp_mean": round(temp_val, 2) if temp_val is not None else 0.0,
         "ecg_mean": round(ecg_mean, 5) if ecg_mean is not None else 0.0,
@@ -622,12 +645,15 @@ with tab1:
                     threshold=0.50
                 )
 
-        phys_pct = int(round(st.session_state["physio_score"] * 100))
-        badge_cls = "score-danger" if phys_pct > 65 else ("score-warn" if phys_pct > 35 else "score-safe")
+        phys_score = float(st.session_state["physio_score"])
+        phys_pct_str = f"{phys_score * 100:.2f}%"
+        pred_class = telemetry.get("predicted_class", "NON-STRESS" if phys_score < 0.50 else "STRESS")
+        badge_cls = "score-danger" if phys_score > 0.65 else ("score-warn" if phys_score > 0.35 else "score-safe")
 
         st.html(f"""<div style='margin-top: 10px;'>
   <div class='med-metric-row'><span class='med-metric-label'>Subject ID</span> <span class='med-metric-value med-metric-value-accent'>{telemetry['subject_id']}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Recording Window</span> <span class='med-metric-value'>{telemetry['session_option']}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Model Classification</span> <span class='med-metric-value' style='font-weight:700;'>{pred_class}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Data Fingerprint</span> <span class='med-metric-value' style='font-family: monospace; font-size: 0.75rem; color: #4338ca;'>SHA-256: {telemetry['fingerprint']}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Estimated Heart Rate</span> <span class='med-metric-value'>{telemetry['heart_rate_bpm']} BPM</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Chest EDA Mean</span> <span class='med-metric-value'>{telemetry['eda_mean']} µS</span></div>
@@ -638,8 +664,8 @@ with tab1:
 </div>""")
 
         st.html(f"""<div class="med-score-box">
-  <div class="med-score-label">Physiological Stress Probability</div>
-  <div class="med-score-badge {badge_cls}">{phys_pct}%</div>
+  <div class="med-score-label">Physiological Stress Probability & Class</div>
+  <div class="med-score-badge {badge_cls}">{phys_pct_str} ({pred_class})</div>
 </div>""")
 
         if HAS_PLOTLY and telemetry.get("ecg_waveform_preview"):
@@ -654,7 +680,7 @@ with tab1:
                     name="Chest ECG (mV)"
                 ))
                 fig_signal.update_layout(
-                    title=f"WESAD {selected_subject}: {telemetry['condition_name']} 5s ECG Signal",
+                    title=f"WESAD {selected_subject}: {telemetry['condition_name']} 5s ECG Signal ({phys_pct_str})",
                     xaxis_title="Time (seconds)",
                     yaxis_title="ECG (mV)",
                     height=200,
