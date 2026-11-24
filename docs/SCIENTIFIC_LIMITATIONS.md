@@ -24,10 +24,17 @@ The campus spatial engine (`src/location/model.py`) is a **deterministic geodesi
 - Parameters such as zone lighting ratings and spatial isolation indices are cataloged static heuristics, not statistically fitted regression coefficients.
 - The engine does not account for micro-topography, building interiors, dynamic foot traffic, or localized security patrol schedules.
 
-### Limitation 4: Environmental Engine Nature (Rule-Based Heuristic)
-The environmental branch (`src/environment/model.py`) is an **expert rule-based evaluator**.
-- Scores are computed from fixed additive heuristic weights assigned to diurnal hours, binary illumination (`Light`/`Dark`), and categorical crowd density (`Low`/`Medium`/`High`).
-- The weights are intuitive approximations rather than empirically estimated log-odds from historical safety incident data.
+### Limitation 4: Environmental Engine Nature (Synthetic-Trained ML vs. Live Physical Sensors)
+The environmental branch (`src/environment/model.py`) utilizes **AI classification models trained on a 73,440-record synthetic simulation dataset** derived from the BIT Mesra campus crowd and lighting schedule:
+1. **Four-Tier Provenance Distinction:**
+   - **Historical Baseline Schedule:** The rule table (`BIT_Mesra_Campus_Crowd_Dataset(1).xlsx`) encoding user-specified and assumed operating hours across 17 locations.
+   - **Synthetic Training Data:** 73,440 simulated observations over 180 days with diurnal noise and perturbation.
+   - **ML-Generated Experimental Predictions:** XGBoost (Model A: Crowd) and Random Forest (Model B: Lighting) inferring expected conditions from `location`, `hour_of_day`, `day_of_week`, and `weekend_indicator`.
+   - **Actual Live Sensor Measurements:** Real-time photometric lux meters, optical pedestrian counters, or acoustic sensors (**NOT currently available on campus**).
+2. **Rule-Learning Artifact vs. Real-World Generalization:**
+   - Because the synthetic training set was generated from diurnal campus rules, the models achieve high test accuracy (72.7% crowd, 88.5% lighting) by learning the underlying generation rules.
+   - These scores must **NEVER** be cited as real-world personal threat detection accuracy.
+   - The engine predicts *expected scheduled conditions* based on clock time and geography, not sudden impromptu gatherings, power outages, or localized disturbances.
 
 ### Limitation 5: Active Inference Nature (Heuristic Index vs. Calibrated Probability)
 Because the Level 1 Meta-Learner is untrained, the active score displayed by the system is the **Experimental Weighted Context Index**:

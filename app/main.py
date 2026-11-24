@@ -33,6 +33,7 @@ elif sys.path[0] != _project_root:
 import config
 from src.fusion.predict import MultimodalThreatPredictor
 from src.location.campus_map import CampusMapAnalyzer
+from src.environment.model import SUPPORTED_LOCATIONS
 from src.physiological.preprocessing import load_subject_data
 from src.physiological.feature_extraction import extract_window_features
 
@@ -476,62 +477,104 @@ with tab1:
   <div class="med-score-badge {badge_cls}">{score_disp}</div>
 </div>""")
 
-    # CARD 3 — ENVIRONMENTAL CONTEXT
+    # CARD 3 — ENVIRONMENTAL CONTEXT (AUTOMATIC AI PREDICTION)
     with col3:
         st.html("""<div class="med-card-header">
   <div>
     <span class="med-card-title">3. Environmental Context</span>
-    <span class="med-card-subtitle">Situational Factors</span>
+    <span class="med-card-subtitle">AI-Based Situational Prediction</span>
   </div>
-  <span class="med-provenance-pill pill-rule">⏱️ Rule-Based Environmental Context Evaluator</span>
+  <span class="med-provenance-pill pill-ml">⚡ Synthetic-Trained ML Prediction Engine</span>
 </div>""")
 
-        now_campus = config.get_campus_now()
-        current_time_str = st.session_state.get("client_time_str") or now_campus.strftime("%I:%M %p")
-        display_time = f"{current_time_str} IST" if "IST" not in current_time_str else current_time_str
-        st.text_input("Time of Day", value=display_time, disabled=True)
+        # 1. Automatic Time and Day Detection (Asia/Kolkata)
+        ist_time_info = predictor.env_engine.get_current_ist_time()
+        curr_time_disp = ist_time_info["time_str"]
+        curr_day_disp = ist_time_info["day_of_week"]
+        is_wknd = ist_time_info["is_weekend"]
+        hour_val = ist_time_info["hour_float"]
+        wknd_tag = "Weekend" if is_wknd else "Weekday"
 
-        def on_env_change():
-            now_campus_inner = config.get_campus_now()
-            current_hour = st.session_state.get("client_hour") or (now_campus_inner.hour + now_campus_inner.minute / 60.0)
-            l_opt = st.session_state.get("radio_lighting", "Light")
-            c_opt = st.session_state.get("radio_crowd", "Medium")
-            env_score = predictor.predict_environment(
-                time_of_day_hour=current_hour,
-                lighting_condition=l_opt,
-                crowd_density=c_opt
+        # 2. Location Resolution (GPS vs Manual Fallback)
+        loc_res = st.session_state.get("location_res")
+        has_gps_landmark = (loc_res is not None and loc_res.get("nearest_landmark") is not None)
+        gps_resolved_name = loc_res["nearest_landmark"]["name"] if has_gps_landmark else None
+
+        if has_gps_landmark:
+            use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=False, key="cb_manual_env_override")
+            if use_manual_loc:
+                default_idx = SUPPORTED_LOCATIONS.index(gps_resolved_name) if gps_resolved_name in SUPPORTED_LOCATIONS else 0
+                active_env_location = st.selectbox("Campus Landmark (Manual Override)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_manual_env_loc")
+                loc_origin = "Manual Selection (Override)"
+            else:
+                active_env_location = gps_resolved_name
+                loc_origin = "Live GPS Resolved"
+        else:
+            st.caption("📍 GPS unavailable or outside campus. Select campus location:")
+            active_env_location = st.selectbox("Campus Landmark (Manual Fallback)", SUPPORTED_LOCATIONS, index=0, key="sel_manual_env_loc_fallback")
+            loc_origin = "Manual Selection (GPS Unavailable)"
+
+        # 3. Automatic AI Environmental Inference
+        env_pred = predictor.predict_environment_context(
+            location=active_env_location,
+            hour=hour_val,
+            day_of_week=curr_day_disp,
+            is_weekend=is_wknd
+        )
+
+        if env_pred.get("status") == "SUCCESS":
+            st.session_state["env_score"] = env_pred["calibrated_environmental_score"]
+
+            crowd_res = env_pred["crowd_prediction"]
+            light_res = env_pred["lighting_prediction"]
+            crowd_cat = crowd_res["category"]
+            crowd_conf = crowd_res["confidence_pct"]
+            crowd_model = crowd_res["model_name"]
+
+            light_cat = light_res["category"]
+            light_conf = light_res["confidence_pct"]
+            light_model = light_res["model_name"]
+            lux_val = light_res.get("lux_estimate", "—")
+
+            st.html(f"""<div style='margin-top: 6px;'>
+  <div class='med-metric-row'><span class='med-metric-label'>Location</span> <span class='med-metric-value med-metric-value-accent'>{active_env_location}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Location Mode</span> <span class='med-metric-value' style='font-size:0.8rem;'>{loc_origin}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Time (Asia/Kolkata)</span> <span class='med-metric-value'>{curr_time_disp}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Day of Week</span> <span class='med-metric-value'>{curr_day_disp} ({wknd_tag})</span></div>
+</div>
+
+<div style='display:flex; gap:8px; margin-top:10px;'>
+  <div style='flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px;'>
+    <div style='font-size:0.75rem; color:#888;'>Crowd Density</div>
+    <div style='font-size:1.05rem; font-weight:700; color:#fff;'>{crowd_cat} <span style='font-size:0.75rem; color:#aaa;'>({crowd_conf}%)</span></div>
+    <div style='font-size:0.68rem; color:#00bcd4; margin-top:2px;'>{crowd_model}</div>
+  </div>
+  <div style='flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px;'>
+    <div style='font-size:0.75rem; color:#888;'>Lighting Condition</div>
+    <div style='font-size:1.05rem; font-weight:700; color:#fff;'>{light_cat} <span style='font-size:0.75rem; color:#aaa;'>({light_conf}%)</span></div>
+    <div style='font-size:0.68rem; color:#00bcd4; margin-top:2px;'>{light_model} · ~{lux_val} lx</div>
+  </div>
+</div>
+
+<div class='med-alert-warn' style='font-size:0.75rem; margin-top:8px; padding:6px 10px; line-height:1.3;'>
+  ⚠️ <strong>SYNTHETIC-DATA TRAINED MODEL — EXPERIMENTAL PREDICTION</strong><br>
+  <strong>NOT LIVE SENSOR MEASUREMENT.</strong> Actual campus crowd and lighting conditions may differ from predictions.
+</div>""")
+        else:
+            st.session_state["env_score"] = 0.20
+            st.html("""<div class='med-alert-error' style='font-size:0.8rem; margin-top:8px;'>
+  ⚠️ <strong>UNKNOWN</strong> — Environmental models unavailable or unsupported campus location.
+</div>""")
+
+        # Auto-update threat fusion if previously analyzed
+        if st.session_state.get("analyzed_threat") is not None:
+            loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
+            st.session_state["analyzed_threat"] = predictor.predict_fusion(
+                physiological_stress_score=st.session_state["physio_score"],
+                location_risk_score=loc_score_val,
+                environment_risk_score=st.session_state["env_score"],
+                threshold=0.50
             )
-            st.session_state["env_score"] = env_score
-            if st.session_state.get("analyzed_threat") is not None:
-                loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
-                st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                    physiological_stress_score=st.session_state["physio_score"],
-                    location_risk_score=loc_score_val,
-                    environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50
-                )
-
-        lighting_opt = st.radio("Lighting", ["Light", "Dark"], horizontal=True, key="radio_lighting", on_change=on_env_change)
-        crowd_opt = st.radio("Crowd Density", ["Low", "Medium", "High"], horizontal=True, key="radio_crowd", on_change=on_env_change)
-
-        if st.button("Analyze Environment", key="btn_env", use_container_width=True):
-            now_campus_btn = config.get_campus_now()
-            current_hour = st.session_state.get("client_hour") or (now_campus_btn.hour + now_campus_btn.minute / 60.0)
-            env_score = predictor.predict_environment(
-                time_of_day_hour=current_hour,
-                lighting_condition=lighting_opt,
-                crowd_density=crowd_opt
-            )
-            st.session_state["env_score"] = env_score
-
-            if st.session_state.get("analyzed_threat") is not None:
-                loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
-                st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                    physiological_stress_score=st.session_state["physio_score"],
-                    location_risk_score=loc_score_val,
-                    environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50
-                )
 
         env_pct = int(round(st.session_state["env_score"] * 100))
         env_badge_cls = "score-danger" if env_pct > 65 else ("score-warn" if env_pct > 35 else "score-safe")

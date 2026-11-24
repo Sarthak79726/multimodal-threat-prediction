@@ -13,7 +13,7 @@ The **Multimodal Threat Prediction Engine** is designed to explore the integrati
 
 1. **Physiological Analysis:** Wearable sensor biometric signals.
 2. **Geospatial Analysis:** Live GPS positioning evaluated against campus geography.
-3. **Environmental Analysis:** Contextual situational parameters (time, ambient illumination, crowd density).
+3. **Environmental Analysis:** Contextual situational parameters (time, ambient illumination, crowd density) automatically evaluated using trained Machine Learning models (Model A: XGBoost Crowd Predictor, Model B: Random Forest Lighting Predictor) with automatic Asia/Kolkata system time and GPS coordinate landmark resolution.
 
 These three analytical streams constitute the **Level 0 Base Input Branches**. The architecture incorporates a **Level 1 Machine Learning Stacking Ensemble** designed to fuse the branch outputs into an optimal multimodal probability estimate once a verified multimodal training dataset becomes available.
 
@@ -27,14 +27,14 @@ These three analytical streams constitute the **Level 0 Base Input Branches**. T
          ▼                               ▼                               ▼
 ┌─────────────────────────────┐ ┌─────────────────────────────┐ ┌─────────────────────────────┐
 │ 1. PHYSIOLOGICAL BRANCH     │ │ 2. SPATIAL BRANCH           │ │ 3. ENVIRONMENTAL BRANCH     │
-│ WESAD Wearable Biometrics   │ │ BIT Mesra Campus GPS        │ │ Situational Factors         │
-│ • Chest: ECG, EDA, EMG, TEMP│ │ • HTML5 Browser GPS         │ │ • Campus Schedule (IST)     │
-│ • Wrist: BVP, EDA, TEMP, ACC│ │ • 17 Verified BIT Landmarks │ │ • Illumination (Light/Dark) │
-│ • 76 Extracted Features     │ │ • Security Post Distances   │ │ • Crowd Density Level       │
+│ WESAD Wearable Biometrics   │ │ BIT Mesra Campus GPS        │ │ AI-Based Environmental Pred.│
+│ • Chest: ECG, EDA, EMG, TEMP│ │ • HTML5 Browser GPS         │ │ • Auto Asia/Kolkata (IST)   │
+│ • Wrist: BVP, EDA, TEMP, ACC│ │ • 17 Verified BIT Landmarks │ │ • Auto GPS Geofence Match   │
+│ • 76 Extracted Features     │ │ • Security Post Distances   │ │ • 73,440 Synthetic Records  │
 │                             │ │                             │ │                             │
-│ Model: Random Forest        │ │ Model: Deterministic Haversine│ Model: Rule-Based Evaluator │
-│ Output: P(Stress|x) ∈ [0,1] │ │ Output: P_spatial ∈ [0,1]   │ │ Output: P_env ∈ [0,1]       │
-│ STATUS: Trained ML (WESAD)  │ │ STATUS: Deterministic Engine│ │ STATUS: Rule-Based Engine   │
+│ Model: Random Forest        │ │ Model: Deterministic Haversine│ Model A: XGBoost (Crowd)    │
+│ Output: P(Stress|x) ∈ [0,1] │ │ Output: P_spatial ∈ [0,1]   │ │ Model B: Random Forest(Light│
+│ STATUS: Trained ML (WESAD)  │ │ STATUS: Deterministic Engine│ │ STATUS: Trained ML (Synth)  │
 └──────────────┬──────────────┘ └──────────────┬──────────────┘ └──────────────┬──────────────┘
                │                               │                               │
                └───────────────────────┬───────┴───────────────────────────────┘

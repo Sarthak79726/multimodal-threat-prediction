@@ -97,7 +97,7 @@ Detailed architectural, mathematical, and ethical specifications are maintained 
 |---|---|---|---|---|
 | **1. Physiological** | `PhysiologicalStressModel` | WESAD (Wearable Stress Benchmark) | $P(\text{Stress} \mid \mathbf{x}) \in [0, 1]$ | **Trained ML** (Random Forest) |
 | **2. Spatial** | `SpatialRiskEngine` | BIT Mesra Campus Landmarks & Geodesics | Geodesic vulnerability $\in [0, 1]$ | **Deterministic Engine** (Haversine) |
-| **3. Environmental**| `EnvironmentalContextEngine` | Diurnal IST, Lux, Crowd Density | Contextual vulnerability $\in [0, 1]$ | **Rule-Based Engine** (Heuristic) |
+| **3. Environmental**| `EnvironmentalContextEngine` | BIT Mesra Synthetic Environmental Dataset (73,440 samples) | Contextual vulnerability $\in [0, 1]$, Crowd Category, Lighting Category, Lux Estimate | **Trained ML (Experimental)** (XGBoost & Random Forest) |
 | **4. Meta-Learner** | `StackingEnsemblePipeline` | Awaiting Empirical Multimodal Data | — | **UNTRAINED** |
 | **5. Active Index** | `MultimodalThreatPredictor` | Heuristic Linear Combination | Context Index $\in [0, 1]$ | **Experimental Heuristic Index** |
 
@@ -144,12 +144,18 @@ python -m unittest discover tests -v
 streamlit run app/main.py
 ```
 
-### 4. Execute Separated Training Workflows
+### 4. Execute Environmental AI & Meta-Learner Workflows
 ```bash
-# A. Run Isolated Synthetic Simulation Demo (Outputs to models/fusion/synthetic_demo/):
+# A. Generate 73,440-record Synthetic Environmental Dataset:
+python src/environment/generate_synthetic_dataset.py
+
+# B. Train Environmental Context AI Models (Model A: Crowd, Model B: Lighting):
+python src/environment/train.py
+
+# C. Run Isolated Synthetic Simulation Demo (Outputs to models/fusion/synthetic_demo/):
 python src/fusion/train.py --demo
 
-# B. Attempt Production Training (Strictly requires real empirical dataset):
+# D. Attempt Production Training (Strictly requires real empirical dataset):
 python src/fusion/train.py --production --data-path path/to/real_multimodal_data.csv
 ```
 *(If no empirical dataset is provided, production training safely terminates with a descriptive error and leaves the meta-model untrained).*

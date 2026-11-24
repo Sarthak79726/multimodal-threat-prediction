@@ -104,6 +104,28 @@ class MultimodalThreatPredictor:
             crowd_density=crowd_density
         )
 
+    def predict_environment_context(
+        self,
+        location: Optional[str] = None,
+        hour: Optional[float] = None,
+        day_of_week: Optional[str] = None,
+        is_weekend: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes automatic AI environmental prediction for crowd and lighting conditions.
+        Returns full prediction payload including categories, model names, confidence,
+        and continuous calibrated scores.
+        """
+        res = self.env_engine.predict_environment(
+            location=location,
+            hour_of_day=hour,
+            day_of_week=day_of_week,
+            weekend_indicator=is_weekend
+        )
+        self._last_crowd_score = res.get("environmental_crowd_context_score", 0.15)
+        self._last_lighting_score = res.get("environmental_lighting_context_score", 0.18)
+        return res
+
     def predict_fusion(
         self,
         physiological_stress_score: float,
@@ -179,6 +201,10 @@ class MultimodalThreatPredictor:
             "physiological_stress_score": phys_norm,
             "location_risk_score": loc_norm,
             "environment_risk_score": env_norm,
+            # Explicit environmental branch outputs
+            "environmental_crowd_context_score": getattr(self, "_last_crowd_score", 0.15),
+            "environmental_lighting_context_score": getattr(self, "_last_lighting_score", 0.18),
+            "environmental_model_provenance": "SYNTHETIC-DATA TRAINED MODEL (EXPERIMENTAL PREDICTION)",
             # Provenance flags
             "modalities_metadata": {
                 "physiological": self.physio_engine.get_metadata(),

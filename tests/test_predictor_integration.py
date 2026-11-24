@@ -58,9 +58,10 @@ class TestPredictorIntegration(unittest.TestCase):
         self.assertFalse(meta["spatial"]["is_trained_ml"])
         self.assertEqual(meta["spatial"]["branch"], "Spatial")
 
-        # Environmental should be flagged as rule-based evaluator
-        self.assertFalse(meta["environmental"]["is_trained_ml"])
+        # Environmental is now an AI-based experimental predictor (trained on synthetic campus dataset)
+        self.assertTrue(meta["environmental"]["is_trained_ml"])
         self.assertEqual(meta["environmental"]["branch"], "Environmental")
+        self.assertEqual(meta["environmental"]["synthetic_provenance"], "SYNTHETIC_SIMULATION_RULE_GENERATED")
 
     def test_missing_modality_robustness(self):
         """Verifies predictor gracefully handles extreme inputs without throwing exceptions."""
