@@ -415,3 +415,30 @@ li[role="option"] {
   font-weight: 500;
 }
 
+
+/* Provenance Badges for Transparency */
+.med-provenance-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-top: 4px;
+  margin-bottom: 8px;
+  letter-spacing: 0.02em;
+}
+.pill-ml {
+  background-color: #EBF8FF;
+  color: #2B6CB0;
+  border: 1px solid #BEE3F8;
+}
+.pill-rule {
+  background-color: #F7FAFC;
+  color: #4A5568;
+  border: 1px solid #E2E8F0;
+}
+.pill-stacking {
+  background-color: #FAF5FF;
+  color: #6B46C1;
+  border: 1px solid #E9D8FD;
+}

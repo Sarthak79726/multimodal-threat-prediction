@@ -12,13 +12,7 @@ elif sys.path[0] != _project_root:
     sys.path.remove(_project_root)
     sys.path.insert(0, _project_root)
 
-import importlib
 import config
-if not hasattr(config, "get_campus_now"):
-    try:
-        config = importlib.reload(config)
-    except Exception:
-        pass
 from src.location.landmarks import get_all_landmarks_list
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

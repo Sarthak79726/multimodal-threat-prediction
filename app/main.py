@@ -30,13 +30,7 @@ elif sys.path[0] != _project_root:
     sys.path.remove(_project_root)
     sys.path.insert(0, _project_root)
 
-import importlib
 import config
-if not hasattr(config, "get_campus_now"):
-    try:
-        config = importlib.reload(config)
-    except Exception:
-        pass
 from src.fusion.predict import MultimodalThreatPredictor
 from src.location.campus_map import CampusMapAnalyzer
 from src.physiological.preprocessing import load_subject_data
@@ -84,7 +78,6 @@ def inject_mobile_protections():
 
       if (!inp._protectionAttached) {
         inp._protectionAttached = true;
-        // Block text injection or backspacing while preserving navigation keys
         inp.addEventListener('beforeinput', function(e) {
           e.preventDefault();
         });
@@ -132,26 +125,12 @@ def inject_mobile_protections():
 
 inject_mobile_protections()
 
-# Load HTML Presentation Templates from app/templates/dashboard.html
-def get_template(block_name: str) -> str:
-    tpl_path = Path(__file__).parent / "templates" / "dashboard.html"
-    if tpl_path.exists():
-        with open(tpl_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        start_tag = f"<!-- {block_name}_START -->"
-        end_tag = f"<!-- {block_name}_END -->"
-        if start_tag in content and end_tag in content:
-            return content.split(start_tag)[1].split(end_tag)[0].strip()
-    return ""
-
 def render_header():
-    header_html = get_template("HEADER_TEMPLATE")
-    if not header_html:
-        header_html = """<div class="med-header">
+    header_html = """<div class="med-header">
   <div class="med-header-title-row">
     <div>
       <h1 class="med-title">Multimodal Threat Prediction Engine</h1>
-      <p class="med-subtitle">Physiological, Geospatial & Environmental Risk Assessment</p>
+      <p class="med-subtitle">Level 1 Stacking Ensemble Fusion (Physiological · Geospatial · Environmental)</p>
     </div>
     <div class="med-badge-location">
       BIT Mesra · Ranchi
@@ -165,47 +144,75 @@ def render_overall_risk_panel(res: dict):
     loc_norm = float(res.get("location_risk_score", 0.0))
     env_norm = float(res.get("environment_risk_score", 0.0))
 
-    # Shared single fusion calculation across backend and UI presentation
     phys_pct = phys_norm * 100.0
     loc_pct = loc_norm * 100.0
     env_pct = env_norm * 100.0
+
+    is_stacker_trained = bool(res.get("is_meta_learner_trained", False))
+    final_prob = float(res.get("threat_probability", 0.0))
+    final_pct = float(res.get("threat_score_pct", final_prob * 100.0))
+    status = str(res.get("context_status", res.get("threat_status", "STANDARD CONTEXT")))
+    status_badge_cls = "score-danger" if ("RISK" in status or status == "RISKY") else "score-safe"
+    explanation_txt = html.escape(str(res.get("explanation", "")))
 
     contrib_p = phys_pct * 0.40
     contrib_l = loc_pct * 0.25
     contrib_e = env_pct * 0.35
 
-    final_score_pct = contrib_p + contrib_l + contrib_e
-    threshold_pct = float(res.get("threshold_used", 0.50)) * 100.0
-    status = "RISKY" if final_score_pct >= threshold_pct else "SAFE"
-    status_badge_cls = "score-danger" if status == "RISKY" else "score-safe"
-    explanation_txt = html.escape(str(res.get("explanation", "")))
-
-    template = get_template("OVERALL_PANEL_TEMPLATE")
-    if template:
-        rendered = (
-            template.replace("{{final_score_pct}}", f"{final_score_pct:.2f}")
-            .replace("{{status_badge_cls}}", status_badge_cls)
-            .replace("{{status}}", status)
-            .replace("{{phys_pct}}", f"{phys_pct:.1f}")
-            .replace("{{contrib_p}}", f"{contrib_p:.2f}")
-            .replace("{{loc_pct}}", f"{loc_pct:.1f}")
-            .replace("{{contrib_l}}", f"{contrib_l:.2f}")
-            .replace("{{env_pct}}", f"{env_pct:.1f}")
-            .replace("{{contrib_e}}", f"{contrib_e:.2f}")
-            .replace("{{explanation_txt}}", explanation_txt)
-        )
-    else:
+    if is_stacker_trained:
+        # Rendered only when an independently verified production empirical model has been trained
+        meta_explain = res.get("stacking_explainability") or {}
+        b0 = float(meta_explain.get("intercept_beta0", 0.0))
+        coefs = meta_explain.get("coefficients", {})
+        coef_items = " | ".join([f"{k}: β={v:+.3f}" for k, v in coefs.items()])
         rendered = f"""<div class="med-overall-panel">
-  <div class="med-overall-header">Overall Risk Assessment</div>
+  <div class="med-overall-header">
+    Overall Context Assessment — Level 1 Stacking Ensemble (Empirical)
+  </div>
   <div class="med-overall-content">
     <div class="med-score-hero">
-      <div class="med-score-hero-title">Prototype Threat-Risk Score</div>
-      <div class="med-score-hero-num">{final_score_pct:.2f}%</div>
+      <div class="med-score-hero-title">Stacking Context Assessment</div>
+      <div class="med-score-hero-num">{final_pct:.2f}%</div>
       <div class="med-score-badge {status_badge_cls}">{status}</div>
+      <div style="margin-top: 6px;">
+        <span class="med-provenance-pill pill-stacking">⚙️ Meta-Learner: Trained ML (Production-Eligible)</span>
+      </div>
     </div>
     <div class="med-breakdown-box">
       <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;">
-        Branch Contribution Breakdown
+        Learned Stacking Formulation: <code>logit(P) = β₀ + β₁P₁ + β₂P₂ + β₃P₃</code>
+      </div>
+      <div class="med-metric-row" style="font-size: 0.84rem; background: #F8FAFC; padding: 6px 8px; border-radius: 4px; margin-bottom: 6px;">
+        <span><b>Learned Coefficients:</b></span>
+        <span>β₀={b0:+.3f} | {coef_items}</span>
+      </div>
+      <div class="med-rationale-note">
+        <b>Decision Rationale:</b> {explanation_txt}
+      </div>
+    </div>
+  </div>
+</div>"""
+    else:
+        # Production standard state: Untrained meta-learner with Experimental Weighted Context Index
+        rendered = f"""<div class="med-overall-panel">
+  <div class="med-overall-header">
+    Overall Context Assessment — Experimental Weighted Context Index
+  </div>
+  <div class="med-overall-content">
+    <div class="med-score-hero">
+      <div class="med-score-hero-title">Experimental Weighted Context Index</div>
+      <div class="med-score-hero-num">{final_pct:.2f}%</div>
+      <div class="med-score-badge {status_badge_cls}">{status}</div>
+      <div style="margin-top: 6px;">
+        <span class="med-provenance-pill pill-rule">Meta-Learner: Not Trained</span>
+      </div>
+    </div>
+    <div class="med-breakdown-box">
+      <div class="med-alert-warn" style="margin-bottom: 12px; font-size: 0.88rem; line-height: 1.45;">
+        ⚠️ <b>Important Notice:</b> A validated multimodal threat-prediction model is not currently available because synchronized observations and independently verified outcome labels have not yet been collected.
+      </div>
+      <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;">
+        Heuristic Weighting Breakdown (Reference Baseline)
       </div>
       <div class="med-breakdown-item">
         <span>Physiological Stress (40% Weight):</span>
@@ -219,12 +226,16 @@ def render_overall_risk_panel(res: dict):
         <span>Environment Risk (35% Weight):</span>
         <span><b>{env_pct:.1f}% × 0.35 = {contrib_e:.2f}%</b></span>
       </div>
+      <div style="margin-top: 10px; font-size: 0.83rem; color: var(--text-secondary); font-style: italic;">
+        ℹ️ <b>Clarification:</b> This is a heuristic index, not a calibrated probability of physical threat.
+      </div>
       <div class="med-rationale-note">
         <b>Decision Rationale:</b> {explanation_txt}
       </div>
     </div>
   </div>
 </div>"""
+    st.html(rendered)
     st.html(rendered)
 
 @st.cache_data(show_spinner=False)
@@ -266,6 +277,10 @@ if "client_hour" not in st.session_state:
 if "client_time_str" not in st.session_state:
     st.session_state["client_time_str"] = None
 
+landmark_names = [lm["name"] for lm in config.BIT_MESRA_LANDMARKS]
+if "selected_landmark_name" not in st.session_state or st.session_state["selected_landmark_name"] not in landmark_names:
+    st.session_state["selected_landmark_name"] = landmark_names[0]
+
 # Render Header
 render_header()
 
@@ -281,20 +296,23 @@ with tab1:
     # CARD 1 — PHYSIOLOGICAL ANALYSIS
     with col1:
         st.html("""<div class="med-card-header">
-  <span class="med-card-title">1. Physiological Analysis</span>
-  <span class="med-card-subtitle">WESAD Wearable Signals</span>
+  <div>
+    <span class="med-card-title">1. Physiological Analysis</span>
+    <span class="med-card-subtitle">WESAD Wearable Signals</span>
+  </div>
+  <span class="med-provenance-pill pill-ml">⚡ WESAD-trained ML model — Physiological Stress Detection</span>
 </div>""")
-        
+
         selected_subject = st.selectbox("Select Subject", config.ALL_SUBJECTS, index=0)
         session_option = st.selectbox("Select Recording Window", ["Window 1 (Baseline)", "Window 2 (Stress Session)", "Window 3 (Amusement)"], index=0)
-        
+
         if st.button("Analyze Physiology", key="btn_physio", use_container_width=True):
             try:
                 subj_data = cached_load_subject_data(selected_subject)
                 chest = subj_data['signal']['chest']
                 wrist = subj_data['signal']['wrist']
                 labels = subj_data['label']
-                
+
                 if "Stress" in session_option:
                     stress_indices = np.where(labels == 2)[0]
                     start_sec = (stress_indices[0] / config.SAMPLING_FREQ['chest']) if len(stress_indices) > 0 else 300.0
@@ -304,7 +322,7 @@ with tab1:
                 else:
                     base_indices = np.where(labels == 1)[0]
                     start_sec = (base_indices[0] / config.SAMPLING_FREQ['chest']) if len(base_indices) > 0 else 100.0
-                    
+
                 feats, _ = extract_window_features(selected_subject, chest, wrist, labels, start_sec=start_sec, window_sec=60.0)
                 if feats is not None:
                     st.session_state["physio_score"] = predictor.predict_physiological(feats)
@@ -326,17 +344,20 @@ with tab1:
         phys_pct = int(st.session_state["physio_score"] * 100)
         badge_cls = "score-danger" if phys_pct > 65 else ("score-warn" if phys_pct > 35 else "score-safe")
         st.html(f"""<div class="med-score-box">
-  <div class="med-score-label">Physiological Stress Score</div>
+  <div class="med-score-label">Physiological Stress Probability</div>
   <div class="med-score-badge {badge_cls}">{phys_pct}%</div>
 </div>""")
 
     # CARD 2 — CURRENT LOCATION (LIVE BROWSER GPS)
     with col2:
         st.html("""<div class="med-card-header">
-  <span class="med-card-title">2. Current Location</span>
-  <span class="med-card-subtitle">Browser Geolocation</span>
+  <div>
+    <span class="med-card-title">2. Current Location</span>
+    <span class="med-card-subtitle">Browser Geolocation</span>
+  </div>
+  <span class="med-provenance-pill pill-rule">📐 Deterministic Geospatial Context Engine</span>
 </div>""")
-        
+
         # Render custom reliable GPS sensor component
         if gps_sensor is not None:
             gps_payload = gps_sensor(
@@ -409,11 +430,11 @@ with tab1:
             acc_val = float(c_loc['accuracy_meters'])
             lat_disp = f"{c_loc['latitude']:.6f}"
             lon_disp = f"{c_loc['longitude']:.6f}"
-            
+
             is_low_acc = acc_val > 100.0
             acc_note = " (⚠️ Low Accuracy)" if is_low_acc else ""
             acc_disp = f"±{int(acc_val)} m{acc_note}"
-            
+
             fix_freshness = "Cached Fix (Fresh)" if st.session_state.get("location_is_cached") else "Live GPS Fix"
             near_lm_disp = f"{n_lm['name']} (Proximity Approximate)" if is_low_acc else n_lm["name"]
             dist_disp = f"{n_lm['distance_meters']} m"
@@ -451,22 +472,25 @@ with tab1:
 
         badge_cls = "score-danger" if score_val > 0.65 else ("score-warn" if score_val > 0.35 else "score-safe")
         st.html(f"""<div class="med-score-box">
-  <div class="med-score-label">Location Risk Score</div>
+  <div class="med-score-label">Location Vulnerability Score</div>
   <div class="med-score-badge {badge_cls}">{score_disp}</div>
 </div>""")
 
     # CARD 3 — ENVIRONMENTAL CONTEXT
     with col3:
         st.html("""<div class="med-card-header">
-  <span class="med-card-title">3. Environmental Context</span>
-  <span class="med-card-subtitle">Situational Factors</span>
+  <div>
+    <span class="med-card-title">3. Environmental Context</span>
+    <span class="med-card-subtitle">Situational Factors</span>
+  </div>
+  <span class="med-provenance-pill pill-rule">⏱️ Rule-Based Environmental Context Evaluator</span>
 </div>""")
-        
+
         now_campus = config.get_campus_now()
         current_time_str = st.session_state.get("client_time_str") or now_campus.strftime("%I:%M %p")
         display_time = f"{current_time_str} IST" if "IST" not in current_time_str else current_time_str
         st.text_input("Time of Day", value=display_time, disabled=True)
-        
+
         def on_env_change():
             now_campus_inner = config.get_campus_now()
             current_hour = st.session_state.get("client_hour") or (now_campus_inner.hour + now_campus_inner.minute / 60.0)
@@ -489,7 +513,7 @@ with tab1:
 
         lighting_opt = st.radio("Lighting", ["Light", "Dark"], horizontal=True, key="radio_lighting", on_change=on_env_change)
         crowd_opt = st.radio("Crowd Density", ["Low", "Medium", "High"], horizontal=True, key="radio_crowd", on_change=on_env_change)
-        
+
         if st.button("Analyze Environment", key="btn_env", use_container_width=True):
             now_campus_btn = config.get_campus_now()
             current_hour = st.session_state.get("client_hour") or (now_campus_btn.hour + now_campus_btn.minute / 60.0)
@@ -512,7 +536,7 @@ with tab1:
         env_pct = int(round(st.session_state["env_score"] * 100))
         env_badge_cls = "score-danger" if env_pct > 65 else ("score-warn" if env_pct > 35 else "score-safe")
         st.html(f"""<div class="med-score-box">
-  <div class="med-score-label">Environment Risk Score</div>
+  <div class="med-score-label">Environment Vulnerability Score</div>
   <div class="med-score-badge {env_badge_cls}">{env_pct}%</div>
 </div>""")
 
@@ -520,7 +544,7 @@ with tab1:
 
     col_center = st.columns([1, 2, 1])[1]
     with col_center:
-        if st.button("🛡️ ANALYZE OVERALL THREAT", key="btn_main_threat", use_container_width=True):
+        if st.button("🛡️ EVALUATE OVERALL CONTEXT RISK", key="btn_main_threat", use_container_width=True):
             loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
             res = predictor.predict_fusion(
                 physiological_stress_score=st.session_state["physio_score"],
@@ -530,7 +554,7 @@ with tab1:
             )
             st.session_state["analyzed_threat"] = res
 
-    # SECTION 4: OVERALL RISK ASSESSMENT PANEL (Rendered as pure HTML from template)
+    # SECTION 4: OVERALL RISK ASSESSMENT PANEL
     if st.session_state["analyzed_threat"] is not None:
         render_overall_risk_panel(st.session_state["analyzed_threat"])
 
@@ -542,8 +566,6 @@ with tab2:
     st.caption("Interactive GPS Geofence, Nearest Landmark Object Detection, & Distance to Guard Posts")
 
     sp_col1, sp_col2 = st.columns([1, 1])
-
-    landmark_names = [lm["name"] for lm in config.BIT_MESRA_LANDMARKS]
 
     def apply_landmark_selection(target_lm):
         if not target_lm:
@@ -568,14 +590,11 @@ with tab2:
             )
 
     def on_landmark_preset_change():
-        sel_name = st.session_state.get("tab2_preset_radio")
+        sel_name = st.session_state.get("tab2_preset_radio_widget")
         if sel_name:
+            st.session_state["selected_landmark_name"] = sel_name
             target_lm = next((lm for lm in config.BIT_MESRA_LANDMARKS if lm["name"] == sel_name), config.BIT_MESRA_LANDMARKS[0])
             apply_landmark_selection(target_lm)
-            if sel_name in landmark_names:
-                idx = landmark_names.index(sel_name)
-                st.session_state["last_table_selected_row"] = idx
-                st.session_state["landmark_table_select"] = {"selection": {"rows": [idx], "columns": []}}
 
     def on_landmark_table_select():
         table_state = st.session_state.get("landmark_table_select")
@@ -590,30 +609,30 @@ with tab2:
             if 0 <= selected_row_idx < len(config.BIT_MESRA_LANDMARKS):
                 st.session_state["last_table_selected_row"] = selected_row_idx
                 clicked_lm = config.BIT_MESRA_LANDMARKS[selected_row_idx]
-                st.session_state["tab2_preset_radio"] = clicked_lm["name"]
+                st.session_state["selected_landmark_name"] = clicked_lm["name"]
                 apply_landmark_selection(clicked_lm)
         else:
             st.session_state["last_table_selected_row"] = None
 
     with sp_col1:
         st.markdown("#### ⚙️ Campus Landmark Presets")
-        
+
         loc_res = st.session_state.get("location_res")
-        cur_lm_name = loc_res["nearest_landmark"]["name"] if (loc_res and loc_res.get("nearest_landmark")) else landmark_names[0]
+        cur_selected = st.session_state.get("selected_landmark_name", landmark_names[0])
+        cur_idx = landmark_names.index(cur_selected) if cur_selected in landmark_names else 0
 
-        if "tab2_preset_radio" not in st.session_state or st.session_state["tab2_preset_radio"] not in landmark_names:
-            st.session_state["tab2_preset_radio"] = cur_lm_name
-
+        # Dedicated widget key decoupled from external mutation
         selected_radio = st.radio(
             "Select Landmark Preset to Evaluate:",
             landmark_names,
-            key="tab2_preset_radio",
+            index=cur_idx,
+            key="tab2_preset_radio_widget",
             on_change=on_landmark_preset_change
         )
 
         st.markdown("---")
         st.markdown("#### 📊 Spatial Metrics")
-        
+
         if loc_res and loc_res.get("nearest_landmark"):
             near_lm = loc_res["nearest_landmark"]
             det_lm = loc_res["detected_landmark"]
@@ -643,14 +662,14 @@ with tab2:
   <div class='med-metric-row'><span>Spatial Isolation Index:</span> <span><b>{iso_val * 100:.1f}%</b></span></div>
   <hr style='margin: 10px 0; border: none; border-top: 1px solid var(--border-color);'>
   <div style='text-align: center; margin-top: 8px;'>
-    <span style='font-size: 0.9rem; font-weight: 600; color: var(--text-secondary);'>Contextual Location Risk:</span>
+    <span style='font-size: 0.9rem; font-weight: 600; color: var(--text-secondary);'>Contextual Location Vulnerability:</span>
     <span style='font-size: 1.25rem; font-weight: 800; color: {"var(--status-danger-color)" if loc_risk_val > 0.5 else "var(--status-safe-color)"}; margin-left: 8px;'>{int(loc_risk_val * 100) if loc_res else "—"}%</span>
   </div>
 </div>""")
 
     with sp_col2:
         st.markdown("#### 🗺️ BIT Mesra Interactive Campus Map")
-        
+
         map_records = []
         for lm in config.BIT_MESRA_LANDMARKS:
             map_records.append({
@@ -660,9 +679,9 @@ with tab2:
                 "Type": lm["location_type"].replace("_", " ").title(),
                 "Marker Type": "Campus Landmark"
             })
-            
+
         map_df = pd.DataFrame(map_records)
-        
+
         if loc_res and loc_res.get("current_location"):
             c_loc = loc_res["current_location"]
             near_name = loc_res["nearest_landmark"]["name"] if loc_res.get("nearest_landmark") else "User Location"
@@ -676,7 +695,7 @@ with tab2:
             combined_df = pd.concat([map_df, user_point], ignore_index=True)
         else:
             combined_df = map_df
-        
+
         if HAS_PLOTLY:
             fig = px.scatter_map(
                 combined_df,

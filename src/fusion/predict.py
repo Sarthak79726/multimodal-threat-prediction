@@ -1,4 +1,14 @@
-import os
+"""
+Unified Multimodal Threat Predictor.
+Integrates Level 0 Base Models and Level 1 Stacking Meta-Learner with fallback to the Weighted Baseline.
+Guarantees transparent provenance tracking:
+- Model 1 (Physiological): Trained ML on WESAD clinical dataset.
+- Model 2 (Spatial): Deterministic Geospatial Campus Analyzer (BIT Mesra).
+- Model 3 (Environmental): Contextual Rule-Based Evaluator.
+- Model 4 (Meta-Learner): Level 1 Stacking Classifier (when legitimately trained).
+- Baseline: Weighted Late Fusion Reference Benchmark.
+"""
+
 import sys
 import pickle
 import numpy as np
@@ -6,105 +16,80 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-# Ensure project root is prioritized in sys.path
+# Ensure project root is in sys.path
 _project_root = str(Path(__file__).resolve().parent.parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
-elif sys.path[0] != _project_root:
-    sys.path.remove(_project_root)
-    sys.path.insert(0, _project_root)
 
 import config
+from src.physiological.model import PhysiologicalStressModel
+from src.location.model import SpatialRiskEngine
+from src.environment.model import EnvironmentalContextEngine
+from src.fusion.meta_learner import WeightedLateFusionBaseline
+from src.fusion.stacking_pipeline import StackingEnsemblePipeline, IneligibleProductionArtifactError
 
 class MultimodalThreatPredictor:
     """
     Unified Inference Engine for Multimodal Threat Prediction System.
-    Evaluates strictly 3 input branches + 1 Meta-Learner Fusion Model:
-    1. Model 1: Physiological Stress Model -> physiological_stress_score
-    2. Model 2: Location Risk Model -> location_risk_score
-    3. Model 3: Environment Risk Model -> environment_risk_score
-    4. Fusion Model -> threat_probability (SAFE or RISKY)
+    Evaluates 3 input branches + Stacking Meta-Learner + Late Fusion Baseline.
+    Guarantees strict production provenance gating:
+    Rejects synthetic demo models from production inference and transparently
+    reports untrained meta-learner status until valid multimodal threat data is collected.
     """
     def __init__(self, models_dir: Path = config.MODELS_DIR):
         self.models_dir = Path(models_dir)
-        self.physio_artifact = self._load_pickle(self.models_dir / "physiological" / "physiological_model.pkl")
-        self.loc_artifact = self._load_pickle(self.models_dir / "location" / "location_model.pkl")
-        self.env_artifact = self._load_pickle(self.models_dir / "environment" / "environment_model.pkl")
-        self.fusion_artifact = self._load_pickle(self.models_dir / "fusion" / "fusion_model.pkl")
-        
-    def _load_pickle(self, path: Path) -> Optional[Dict[str, Any]]:
-        if not path.exists():
-            print(f"Warning: Model artifact at {path} does not exist yet.", flush=True)
-            return None
-        with open(path, "rb") as f:
-            return pickle.load(f)
-            
+
+        # 1. Base Model Wrappers
+        self.physio_engine = PhysiologicalStressModel(self.models_dir / "physiological" / "physiological_model.pkl")
+        self.spatial_engine = SpatialRiskEngine(self.models_dir / "location" / "location_model.pkl", use_ml_model=False)
+        self.env_engine = EnvironmentalContextEngine()
+
+        # 2. Level 1 Stacking Ensemble Pipeline (Strict Production Loading)
+        stacking_artifact_path = self.models_dir / "fusion" / "stacking_ensemble.pkl"
+        try:
+            self.stacking_pipeline = StackingEnsemblePipeline.load_artifact(
+                stacking_artifact_path,
+                require_production_eligible=True
+            )
+        except IneligibleProductionArtifactError as e:
+            print(f"[MultimodalThreatPredictor] Ineligible artifact rejected: {e}", flush=True)
+            self.stacking_pipeline = None
+
+        if self.stacking_pipeline is None:
+            # Initialize pipeline with default architecture (unfitted)
+            self.stacking_pipeline = StackingEnsemblePipeline()
+
+        # 3. Explicit Reference Baseline
+        self.baseline = WeightedLateFusionBaseline(threshold=config.DEFAULT_DECISION_THRESHOLD)
+
     def predict_physiological(self, input_dict: Dict[str, float]) -> float:
-        """Computes physiological_stress_score from feature dictionary or model fallback."""
-        if self.physio_artifact is None:
-            return 0.20
-            
-        model = self.physio_artifact["model"]
-        scaler = self.physio_artifact.get("scaler")
-        feature_names = self.physio_artifact["feature_names"]
-        
-        row = {fname: input_dict.get(fname, 0.0) for fname in feature_names}
-        X_df = pd.DataFrame([row])
-        
-        if scaler is not None:
-            X_vec = scaler.transform(X_df)
-            X_df = pd.DataFrame(X_vec, columns=feature_names)
-            
-        prob = float(model.predict_proba(X_df)[0, 1])
-        return prob
-        
+        """Computes physiological stress score P(Stress=1 | biometrics) from feature dictionary."""
+        return self.physio_engine.predict_proba(input_dict)
+
     def predict_location(
         self,
         lat: Optional[float] = None,
         lon: Optional[float] = None,
-        distance_to_security_m: Optional[float] = None,
-        crime_rate: float = 0.1,
-        lighting: float = 8.0,
-        isolation: float = 0.1,
+        accuracy: Optional[float] = None,
         hour: float = 14.0,
+        distance_to_security_m: Optional[float] = None,
+        crime_rate: float = 0.10,
+        lighting: float = 8.0,
+        isolation: float = 0.10,
         loc_type: str = "administrative_hub"
     ) -> float:
-        """Computes location_risk_score from location attributes or GPS coordinates."""
-        if lat is not None and lon is not None:
-            from src.location.campus_map import CampusMapAnalyzer
-            analyzer = CampusMapAnalyzer()
-            res = analyzer.analyze_gps(lat, lon, time_of_day_hour=hour)
-            crime_rate = res.get("crime_rate_index", 0.1)
-            lighting = res.get("lighting_level", 8.0)
-            isolation = res.get("isolation_index", 0.1)
-            loc_type = res.get("location_type", "administrative_hub")
-            distance_to_security_m = res.get("distance_to_security_m", 20.0)
-            if self.loc_artifact is None:
-                return float(res.get("location_risk_score", 0.15))
-        else:
-            if self.loc_artifact is None:
-                return 0.15
-            lat = lat if lat is not None else 23.4123
-            lon = lon if lon is not None else 85.4399
-            distance_to_security_m = distance_to_security_m if distance_to_security_m is not None else 20.0
-
-        model = self.loc_artifact["model"]
-        preprocessor = self.loc_artifact["preprocessor"]
-
-        df_in = pd.DataFrame([{
-            "latitude": lat,
-            "longitude": lon,
-            "distance_to_security_m": distance_to_security_m,
-            "crime_rate_index": crime_rate,
-            "lighting_level": lighting,
-            "isolation_index": isolation,
-            "time_of_day_hour": hour,
-            "location_type": loc_type
-        }])
-
-        X_proc = preprocessor.transform(df_in)
-        prob = float(model.predict_proba(X_proc)[0, 1])
-        return prob
+        """Computes spatial risk score from GPS coordinates or landmark attributes."""
+        return self.spatial_engine.predict_score(
+            lat=lat,
+            lon=lon,
+            accuracy=accuracy,
+            time_of_day_hour=hour,
+            distance_to_security_m=distance_to_security_m,
+            crime_rate=crime_rate,
+            lighting=lighting,
+            isolation=isolation,
+            loc_type=loc_type
+        )
 
     def predict_environment(
         self,
@@ -112,74 +97,12 @@ class MultimodalThreatPredictor:
         lighting_condition: str = "Light",
         crowd_density: str = "Medium"
     ) -> float:
-        """
-        Computes calibrated continuous environment_risk_score from environment attributes.
-        Strictly differentiates between Low, Medium, and High crowd densities across all times of day.
-        """
-        hour = float(time_of_day_hour) % 24.0
-        
-        # 1. Time-of-day factor (graduated night factor)
-        if hour >= 23.0 or hour <= 4.5:
-            time_factor = 0.35  # Deep late night
-        elif (20.0 <= hour < 23.0) or (4.5 < hour <= 6.0):
-            time_factor = 0.22  # Evening / twilight
-        else:
-            time_factor = 0.05  # Normal daytime
-
-        # 2. Lighting factor
-        is_dark = str(lighting_condition).strip().lower() == "dark"
-        lighting_factor = 0.35 if is_dark else 0.08
-
-        # 3. Crowd density factor (clear, distinct graduation)
-        crowd_str = str(crowd_density).strip().lower()
-        if crowd_str == "low":
-            crowd_factor = 0.32  # High vulnerability when isolated
-        elif crowd_str == "medium":
-            crowd_factor = 0.15  # Normal presence of bystanders / friends
-        else:
-            crowd_factor = 0.02  # Well-populated public area
-
-        # Calibrated baseline risk score
-        calibrated_score = round(min(1.0, max(0.05, time_factor + lighting_factor + crowd_factor)), 4)
-        return calibrated_score
-
-    def _generate_explanation(
-        self,
-        physio_pct: float,
-        loc_pct: float,
-        env_pct: float,
-        physio_contrib: float,
-        loc_contrib: float,
-        env_contrib: float,
-        total_pct: float,
-        status: str
-    ) -> str:
-        if status == "RISKY":
-            reasons = []
-            if physio_pct > 50:
-                reasons.append(f"high physiological stress ({physio_pct:.1f}%)")
-            if loc_pct > 50:
-                reasons.append(f"elevated location risk ({loc_pct:.1f}%)")
-            if env_pct > 50:
-                reasons.append(f"adverse environmental factors ({env_pct:.1f}%)")
-            reason_str = ", ".join(reasons) if reasons else "combined multimodal risk factors"
-            return (
-                f"The prototype threat-risk score is elevated at {total_pct:.2f}% ({status}) driven by {reason_str}. "
-                f"All three input branches contribute proportionally based on configured prototype weights."
-            )
-        else:
-            if loc_pct > 65 and physio_pct < 30:
-                return (
-                    f"The prototype threat-risk score is {total_pct:.2f}% ({status} / Low-Medium Risk). Although location risk is "
-                    f"elevated at {loc_pct:.1f}% (which may warrant spatial investigation), low physiological stress ({physio_pct:.1f}%) "
-                    f"and moderate environmental conditions ({env_pct:.1f}%) keep the overall weighted score well below the 50.0% threshold. "
-                    f"High location risk alone does not force a high threat classification without physiological or environmental evidence of danger."
-                )
-            else:
-                return (
-                    f"The prototype threat-risk score is {total_pct:.2f}% ({status}). Physiological stress ({physio_pct:.1f}%), "
-                    f"location risk ({loc_pct:.1f}%), and environmental risk ({env_pct:.1f}%) combine within normal safe parameters."
-                )
+        """Computes calibrated continuous environmental risk score from situational factors."""
+        return self.env_engine.predict_score(
+            time_of_day_hour=time_of_day_hour,
+            lighting_condition=lighting_condition,
+            crowd_density=crowd_density
+        )
 
     def predict_fusion(
         self,
@@ -192,95 +115,158 @@ class MultimodalThreatPredictor:
         weight_environment: float = 0.35
     ) -> Dict[str, Any]:
         """
-        Combines 3 input risk scores into final prototype threat-risk score using an explainable
-        weighted baseline model:
-        fusion_score = 0.40 * physiological_risk + 0.25 * location_risk + 0.35 * environment_risk
-        
-        All inputs are normalized to the 0.0 - 1.0 scale before calculation.
+        Combines 3 input modality risk scores.
+        If a valid trained Stacking Meta-Learner exists, computes learned meta-model probability.
+        Simultaneously computes the Weighted Late Fusion Baseline for explicit benchmark comparison.
         """
-        # 1. Normalize inputs to 0.0 - 1.0 decimal range
-        physio_norm = min(1.0, max(0.0, float(physiological_stress_score)))
-        loc_norm = min(1.0, max(0.0, float(location_risk_score)))
-        env_norm = min(1.0, max(0.0, float(environment_risk_score)))
-        
-        # 2. Configurable Prototype Weights (Default 40% Physio, 25% Location, 35% Environment)
-        w_physio = float(weight_physio)
-        w_loc = float(weight_location)
-        w_env = float(weight_environment)
-        
-        total_w = w_physio + w_loc + w_env
+        # Normalize inputs to [0.0, 1.0]
+        phys_norm = float(np.clip(physiological_stress_score, 0.0, 1.0))
+        loc_norm = float(np.clip(location_risk_score, 0.0, 1.0))
+        env_norm = float(np.clip(environment_risk_score, 0.0, 1.0))
+
+        # 1. Baseline Weighted late fusion
+        w_p = float(weight_physio)
+        w_l = float(weight_location)
+        w_e = float(weight_environment)
+        total_w = w_p + w_l + w_e
         if total_w > 0:
-            w_physio_norm = w_physio / total_w
-            w_loc_norm = w_loc / total_w
-            w_env_norm = w_env / total_w
+            w_p_norm, w_l_norm, w_e_norm = w_p / total_w, w_l / total_w, w_e / total_w
         else:
-            w_physio_norm, w_loc_norm, w_env_norm = 0.40, 0.25, 0.35
-            
-        # 3. Calculate individual branch contributions
-        physio_contrib = w_physio_norm * physio_norm
-        loc_contrib = w_loc_norm * loc_norm
-        env_contrib = w_env_norm * env_norm
-        
-        # 4. Final Prototype Weighted Score
-        fusion_score = physio_contrib + loc_contrib + env_contrib
-        fusion_score_pct = fusion_score * 100.0
-        
-        status = "RISKY" if fusion_score >= threshold else "SAFE"
-        
-        # 5. Requirement #10: Detailed Debug Logging
-        print(f"[DEBUG FUSION] Raw Input Scores: Physio={physiological_stress_score:.4f}, Location={location_risk_score:.4f}, Environment={environment_risk_score:.4f}", flush=True)
-        print(f"[DEBUG FUSION] Normalized Inputs: Physio={physio_norm:.4f} ({physio_norm*100:.1f}%), Location={loc_norm:.4f} ({loc_norm*100:.1f}%), Environment={env_norm:.4f} ({env_norm*100:.1f}%)", flush=True)
-        print(f"[DEBUG FUSION] Configured Weights: Physio={w_physio_norm:.2f}, Location={w_loc_norm:.2f}, Environment={w_env_norm:.2f}", flush=True)
-        print(f"[DEBUG FUSION] Branch Contributions: Physio={physio_contrib:.4f} ({physio_contrib*100:.2f}%), Location={loc_contrib:.4f} ({loc_contrib*100:.2f}%), Environment={env_contrib:.4f} ({env_contrib*100:.2f}%)", flush=True)
-        print(f"[DEBUG FUSION] Final Prototype Risk Score: {fusion_score:.4f} ({fusion_score_pct:.2f}%) | Status: {status} (Threshold: {threshold:.2f})", flush=True)
-        
-        # 6. Dynamic Explanation Narrative
-        explanation = self._generate_explanation(
-            physio_pct=physio_norm * 100.0,
-            loc_pct=loc_norm * 100.0,
-            env_pct=env_norm * 100.0,
-            physio_contrib=physio_contrib * 100.0,
-            loc_contrib=loc_contrib * 100.0,
-            env_contrib=env_contrib * 100.0,
-            total_pct=fusion_score_pct,
-            status=status
+            w_p_norm, w_l_norm, w_e_norm = 0.40, 0.25, 0.35
+
+        contrib_p = w_p_norm * phys_norm
+        contrib_l = w_l_norm * loc_norm
+        contrib_e = w_e_norm * env_norm
+
+        baseline_score = contrib_p + contrib_l + contrib_e
+        baseline_pct = baseline_score * 100.0
+        baseline_status = "RISKY" if baseline_score >= threshold else "SAFE"
+
+        # 2. Level 1 Stacking Meta-Learner (strictly gated by production eligibility)
+        is_prod_stacker_trained = (
+            self.stacking_pipeline.is_trained
+            and getattr(self.stacking_pipeline, "production_eligible", False)
         )
-        
+
+        if is_prod_stacker_trained:
+            stacking_res = self.stacking_pipeline.predict(phys_norm, loc_norm, env_norm)
+            active_score = stacking_res["active_threat_probability"]
+            active_score_pct = stacking_res["active_threat_score_pct"]
+            active_status = stacking_res["active_threat_status"]
+            active_model = stacking_res["model_used"]
+            meta_model_status = "TRAINED (Production-Eligible)"
+            explanation = self._generate_stacking_explanation(
+                active_score_pct, active_status, phys_norm, loc_norm, env_norm, stacking_res.get("stacking_explainability")
+            )
+            stacking_meta_prob = stacking_res.get("stacking_meta_probability")
+            stacking_meta_stat = stacking_res.get("stacking_meta_status")
+            stacking_explain = stacking_res.get("stacking_explainability")
+        else:
+            active_score = baseline_score
+            active_score_pct = baseline_pct
+            active_status = "ELEVATED CONTEXT RISK" if baseline_score >= threshold else "STANDARD CONTEXT"
+            active_model = "Experimental Weighted Context Index"
+            meta_model_status = "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED"
+            explanation = self._generate_baseline_explanation(
+                baseline_pct, active_status, phys_norm, loc_norm, env_norm
+            )
+            stacking_meta_prob = None
+            stacking_meta_stat = None
+            stacking_explain = None
+
         return {
-            "physiological_stress_score": physio_norm,
+            # Base model scores
+            "physiological_stress_score": phys_norm,
             "location_risk_score": loc_norm,
             "environment_risk_score": env_norm,
-            "weights": {
-                "physiological": w_physio_norm,
-                "location": w_loc_norm,
-                "environment": w_env_norm
+            # Provenance flags
+            "modalities_metadata": {
+                "physiological": self.physio_engine.get_metadata(),
+                "spatial": self.spatial_engine.get_metadata(),
+                "environmental": self.env_engine.get_metadata()
+            },
+            # Active decision (either stacking or baseline)
+            "threat_probability": active_score,
+            "threat_score_pct": active_score_pct,
+            "threat_status": active_status,
+            "context_status": active_status,
+            "active_model_name": active_model,
+            "is_meta_learner_trained": is_prod_stacker_trained,
+            "meta_model_status": meta_model_status,
+            "experimental_context_index": active_score,
+            "experimental_context_index_pct": active_score_pct,
+            "notice": "A validated multimodal threat-prediction model is not currently available because synchronized observations and independently verified outcome labels have not yet been collected.",
+            "clarification": "This is a heuristic index, not a calibrated probability of physical threat.",
+            # Stacking Meta-Learner details
+            "stacking_meta_probability": stacking_meta_prob,
+            "stacking_meta_status": stacking_meta_stat,
+            "stacking_explainability": stacking_explain,
+            # Baseline details
+            "baseline_threat_probability": baseline_score,
+            "baseline_threat_score_pct": baseline_pct,
+            "baseline_status": baseline_status,
+            "baseline_weights": {
+                "physiological": w_p_norm,
+                "location": w_l_norm,
+                "environment": w_e_norm
             },
             "contributions": {
-                "physiological": physio_contrib,
-                "location": loc_contrib,
-                "environment": env_contrib
+                "physiological": contrib_p,
+                "location": contrib_l,
+                "environment": contrib_e
             },
             "contributions_pct": {
-                "physiological": physio_contrib * 100.0,
-                "location": loc_contrib * 100.0,
-                "environment": env_contrib * 100.0
+                "physiological": contrib_p * 100.0,
+                "location": contrib_l * 100.0,
+                "environment": contrib_e * 100.0
             },
-            "threat_probability": fusion_score,
-            "threat_score_pct": fusion_score_pct,
-            "threat_status": status,
             "threshold_used": threshold,
             "explanation": explanation
         }
 
+    def _generate_stacking_explanation(
+        self,
+        final_pct: float,
+        status: str,
+        phys_norm: float,
+        loc_norm: float,
+        env_norm: float,
+        meta_explain: Optional[Dict[str, Any]]
+    ) -> str:
+        coefs = meta_explain.get("coefficients", {}) if meta_explain else {}
+        b0 = meta_explain.get("intercept_beta0", 0.0) if meta_explain else 0.0
+
+        p_str = f"Physiological stress is {phys_norm*100:.1f}%."
+        l_str = f"Location risk is {loc_norm*100:.1f}%."
+        e_str = f"Environmental risk is {env_norm*100:.1f}%."
+
+        coef_str = ", ".join([f"{k}: beta={v:+.3f}" for k, v in coefs.items()]) if coefs else "learned parameters"
+        return (
+            f"The Stacking Meta-Learner (Logistic Regression) computed an overall threat probability of {final_pct:.2f}% ({status}). "
+            f"Model weights learned via Out-of-Fold training ({coef_str}, intercept={b0:+.3f}). "
+            f"Input conditions: {p_str} {l_str} {e_str}"
+        )
+
+    def _generate_baseline_explanation(
+        self,
+        final_pct: float,
+        status: str,
+        phys_norm: float,
+        loc_norm: float,
+        env_norm: float
+    ) -> str:
+        return (
+            f"A validated multimodal threat-prediction model is not currently available because "
+            f"synchronized observations and independently verified outcome labels have not yet been collected. "
+            f"Displaying Experimental Weighted Context Index ({final_pct:.2f}% / {status}). "
+            f"This is a heuristic index, not a calibrated probability of physical threat."
+        )
+
 if __name__ == "__main__":
     predictor = MultimodalThreatPredictor()
-    
-    print("--- Test 1: Main Administrative Building (Daytime) ---")
-    loc_score_1 = predictor.predict_location(lat=23.4123, lon=85.4399, hour=14.0)
-    fusion_res_1 = predictor.predict_fusion(0.15, loc_score_1, 0.10)
-    
-    print("\n--- Test 2: User Scenario (Physio 1%, Location 85%, Environment 40%) ---")
-    fusion_res_test = predictor.predict_fusion(0.01, 0.85, 0.40)
-    print("Resulting Score:", fusion_res_test['threat_score_pct'])
-
-
+    print("MultimodalThreatPredictor initialized successfully.")
+    res = predictor.predict_fusion(0.20, 0.85, 0.40)
+    print("Test inference result:")
+    print("  Active Model:", res["active_model_name"])
+    print("  Threat Score:", f"{res['threat_score_pct']:.2f}% ({res['threat_status']})")
+    print("  Explanation:", res["explanation"])
