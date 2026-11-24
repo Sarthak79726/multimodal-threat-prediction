@@ -17,9 +17,47 @@ try:
 except Exception:
     CAMPUS_TIMEZONE = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
+def format_ist_time_dict(now: datetime.datetime) -> dict:
+    """
+    Constructs a standardized dictionary from a datetime object in Asia/Kolkata timezone.
+    Extracts current hour (float and int), day of week, and weekend indicator.
+    Handles midnight boundaries correctly.
+    """
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    dow_num = now.weekday()
+    dow_name = day_names[dow_num]
+    is_weekend = 1 if dow_num in [5, 6] else 0
+    hour_float = round(now.hour + now.minute / 60.0 + now.second / 3600.0, 4)
+
+    return {
+        "datetime": now,
+        "iso_string": now.isoformat(),
+        "time_str": now.strftime("%I:%M %p IST"),
+        "date_str": now.strftime("%Y-%m-%d"),
+        "hour_of_day": now.hour,
+        "hour_float": hour_float,
+        "day_of_week": dow_name,
+        "day_of_week_num": dow_num,
+        "is_weekend": is_weekend
+    }
+
 def get_campus_now() -> datetime.datetime:
     """Returns the current datetime localized to BIT Mesra Campus (Asia/Kolkata / IST) timezone."""
-    return datetime.datetime.now(CAMPUS_TIMEZONE)
+    try:
+        return datetime.datetime.now(CAMPUS_TIMEZONE)
+    except Exception:
+        fallback_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        return datetime.datetime.now(fallback_tz)
+
+def get_current_ist_time() -> dict:
+    """
+    Obtains the current system time in Asia/Kolkata timezone (UTC+05:30).
+    Returns a standardized dictionary containing formatted time strings,
+    hour float, day of week, and weekend indicator.
+    Handles timezone and initialization errors safely without duplicate implementations.
+    """
+    now = get_campus_now()
+    return format_ist_time_dict(now)
 
 # Subject configuration
 ALL_SUBJECTS = ["S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S17"]

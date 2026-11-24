@@ -42,7 +42,11 @@ class MultimodalThreatPredictor:
         # 1. Base Model Wrappers
         self.physio_engine = PhysiologicalStressModel(self.models_dir / "physiological" / "physiological_model.pkl")
         self.spatial_engine = SpatialRiskEngine(self.models_dir / "location" / "location_model.pkl", use_ml_model=False)
-        self.env_engine = EnvironmentalContextEngine()
+        try:
+            self.env_engine = EnvironmentalContextEngine()
+        except Exception as e:
+            print(f"[MultimodalThreatPredictor] Warning: EnvironmentalContextEngine initialization failed: {e}", flush=True)
+            self.env_engine = None
 
         # 2. Level 1 Stacking Ensemble Pipeline (Strict Production Loading)
         stacking_artifact_path = self.models_dir / "fusion" / "stacking_ensemble.pkl"
@@ -91,6 +95,19 @@ class MultimodalThreatPredictor:
             loc_type=loc_type
         )
 
+    def get_current_ist_time(self) -> Dict[str, Any]:
+        """
+        Public delegate for retrieving the current IST time info.
+        Safely attempts to use self.env_engine, falling back to config.get_current_ist_time().
+        Ensures consistent, safe time detection across all deployment targets.
+        """
+        if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "get_current_ist_time"):
+            try:
+                return self.env_engine.get_current_ist_time()
+            except Exception:
+                pass
+        return config.get_current_ist_time()
+
     def predict_environment(
         self,
         time_of_day_hour: float,
@@ -98,11 +115,16 @@ class MultimodalThreatPredictor:
         crowd_density: str = "Medium"
     ) -> float:
         """Computes calibrated continuous environmental risk score from situational factors."""
-        return self.env_engine.predict_score(
-            time_of_day_hour=time_of_day_hour,
-            lighting_condition=lighting_condition,
-            crowd_density=crowd_density
-        )
+        if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "predict_score"):
+            try:
+                return self.env_engine.predict_score(
+                    time_of_day_hour=time_of_day_hour,
+                    lighting_condition=lighting_condition,
+                    crowd_density=crowd_density
+                )
+            except Exception:
+                pass
+        return 0.20
 
     def predict_environment_context(
         self,
@@ -115,16 +137,62 @@ class MultimodalThreatPredictor:
         Executes automatic AI environmental prediction for crowd and lighting conditions.
         Returns full prediction payload including categories, model names, confidence,
         and continuous calibrated scores.
+        Handles engine unavailability or errors defensively without crashing.
         """
-        res = self.env_engine.predict_environment(
-            location=location,
-            hour_of_day=hour,
-            day_of_week=day_of_week,
-            weekend_indicator=is_weekend
-        )
-        self._last_crowd_score = res.get("environmental_crowd_context_score", 0.15)
-        self._last_lighting_score = res.get("environmental_lighting_context_score", 0.18)
-        return res
+        if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "predict_environment"):
+            try:
+                res = self.env_engine.predict_environment(
+                    location=location,
+                    hour_of_day=hour,
+                    day_of_week=day_of_week,
+                    weekend_indicator=is_weekend
+                )
+                self._last_crowd_score = res.get("environmental_crowd_context_score", 0.15)
+                self._last_lighting_score = res.get("environmental_lighting_context_score", 0.18)
+                return res
+            except Exception as e:
+                print(f"[MultimodalThreatPredictor] predict_environment failed: {e}", flush=True)
+
+        # Defensive fallback when environmental engine is unavailable or uninitialized
+        time_info = self.get_current_ist_time()
+        effective_hour = hour if hour is not None else time_info["hour_float"]
+        effective_day = day_of_week or time_info["day_of_week"]
+        effective_wknd = is_weekend if is_weekend is not None else time_info["is_weekend"]
+
+        self._last_crowd_score = 0.20
+        self._last_lighting_score = 0.20
+
+        return {
+            "status": "UNAVAILABLE",
+            "error": "ENVIRONMENTAL_ENGINE_UNAVAILABLE",
+            "message": "EnvironmentalContextEngine is not initialized or encountered an error. Output marked UNKNOWN.",
+            "location": location or "UNKNOWN",
+            "time_display": time_info.get("time_str", "12:00 PM IST"),
+            "hour_of_day": effective_hour,
+            "day_of_week": effective_day,
+            "weekend_indicator": effective_wknd,
+            "crowd_prediction": {
+                "category": "UNKNOWN",
+                "confidence": 0.0,
+                "confidence_pct": 0.0,
+                "model_name": "Unavailable",
+                "status": "ENGINE_UNAVAILABLE"
+            },
+            "lighting_prediction": {
+                "category": "UNKNOWN",
+                "confidence": 0.0,
+                "confidence_pct": 0.0,
+                "model_name": "Unavailable",
+                "lux_estimate": None,
+                "status": "ENGINE_UNAVAILABLE"
+            },
+            "environmental_crowd_context_score": 0.20,
+            "environmental_lighting_context_score": 0.20,
+            "calibrated_environmental_score": 0.20,
+            "is_trained_ml": False,
+            "synthetic_provenance": "NONE",
+            "warning": "Environmental models unavailable. Displaying UNKNOWN context status without fabricated values."
+        }
 
     def predict_fusion(
         self,
@@ -162,7 +230,14 @@ class MultimodalThreatPredictor:
 
         baseline_score = contrib_p + contrib_l + contrib_e
         baseline_pct = baseline_score * 100.0
-        baseline_status = "RISKY" if baseline_score >= threshold else "SAFE"
+
+        # Neutral heuristic classification using configured project thresholds
+        if baseline_score <= config.RISK_THRESHOLDS["LOW_MAX"]:
+            baseline_status = "STANDARD CONTEXT"
+        elif baseline_score <= config.RISK_THRESHOLDS["MEDIUM_MAX"]:
+            baseline_status = "ELEVATED CONTEXT"
+        else:
+            baseline_status = "HIGH CONTEXT"
 
         # 2. Level 1 Stacking Meta-Learner (strictly gated by production eligibility)
         is_prod_stacker_trained = (
@@ -186,7 +261,7 @@ class MultimodalThreatPredictor:
         else:
             active_score = baseline_score
             active_score_pct = baseline_pct
-            active_status = "ELEVATED CONTEXT RISK" if baseline_score >= threshold else "STANDARD CONTEXT"
+            active_status = baseline_status
             active_model = "Experimental Weighted Context Index"
             meta_model_status = "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED"
             explanation = self._generate_baseline_explanation(
@@ -207,22 +282,28 @@ class MultimodalThreatPredictor:
             "environmental_model_provenance": "SYNTHETIC-DATA TRAINED MODEL (EXPERIMENTAL PREDICTION)",
             # Provenance flags
             "modalities_metadata": {
-                "physiological": self.physio_engine.get_metadata(),
-                "spatial": self.spatial_engine.get_metadata(),
-                "environmental": self.env_engine.get_metadata()
+                "physiological": self.physio_engine.get_metadata() if hasattr(self, "physio_engine") and self.physio_engine is not None else {},
+                "spatial": self.spatial_engine.get_metadata() if hasattr(self, "spatial_engine") and self.spatial_engine is not None else {},
+                "environmental": self.env_engine.get_metadata() if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "get_metadata") else {
+                    "branch": "Environmental",
+                    "status": "UNAVAILABLE",
+                    "is_trained_ml": False,
+                    "disclaimer": "EnvironmentalContextEngine is unavailable."
+                }
             },
             # Active decision (either stacking or baseline)
             "threat_probability": active_score,
             "threat_score_pct": active_score_pct,
             "threat_status": active_status,
             "context_status": active_status,
+            "context_classification": active_status,
             "active_model_name": active_model,
             "is_meta_learner_trained": is_prod_stacker_trained,
             "meta_model_status": meta_model_status,
             "experimental_context_index": active_score,
             "experimental_context_index_pct": active_score_pct,
             "notice": "A validated multimodal threat-prediction model is not currently available because synchronized observations and independently verified outcome labels have not yet been collected.",
-            "clarification": "This is a heuristic index, not a calibrated probability of physical threat.",
+            "clarification": "This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.",
             # Stacking Meta-Learner details
             "stacking_meta_probability": stacking_meta_prob,
             "stacking_meta_status": stacking_meta_stat,
@@ -281,11 +362,14 @@ class MultimodalThreatPredictor:
         loc_norm: float,
         env_norm: float
     ) -> str:
+        phys_pct = phys_norm * 100.0
+        loc_pct = loc_norm * 100.0
+        env_pct = env_norm * 100.0
         return (
-            f"A validated multimodal threat-prediction model is not currently available because "
-            f"synchronized observations and independently verified outcome labels have not yet been collected. "
-            f"Displaying Experimental Weighted Context Index ({final_pct:.2f}% / {status}). "
-            f"This is a heuristic index, not a calibrated probability of physical threat."
+            f"Context Assessment: The experimental weighted context index is {final_pct:.2f}%. "
+            f"It combines physiological stress ({phys_pct:.1f}%), location context risk ({loc_pct:.1f}%) "
+            f"and environmental context risk ({env_pct:.1f}%) using predefined reference weights. "
+            f"This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe."
         )
 
 if __name__ == "__main__":

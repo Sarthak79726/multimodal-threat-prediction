@@ -150,10 +150,17 @@ def render_overall_risk_panel(res: dict):
     env_pct = env_norm * 100.0
 
     is_stacker_trained = bool(res.get("is_meta_learner_trained", False))
-    final_prob = float(res.get("threat_probability", 0.0))
-    final_pct = float(res.get("threat_score_pct", final_prob * 100.0))
-    status = str(res.get("context_status", res.get("threat_status", "STANDARD CONTEXT")))
-    status_badge_cls = "score-danger" if ("RISK" in status or status == "RISKY") else "score-safe"
+    final_prob = float(res.get("experimental_context_index", res.get("threat_probability", 0.0)))
+    final_pct = float(res.get("experimental_context_index_pct", res.get("threat_score_pct", final_prob * 100.0)))
+    status = str(res.get("context_status", res.get("context_classification", "STANDARD CONTEXT")))
+    
+    if status == "HIGH CONTEXT":
+        status_badge_cls = "score-danger"
+    elif status == "ELEVATED CONTEXT":
+        status_badge_cls = "score-warn"
+    else:
+        status_badge_cls = "score-safe"
+
     explanation_txt = html.escape(str(res.get("explanation", "")))
 
     contrib_p = phys_pct * 0.40
@@ -172,11 +179,16 @@ def render_overall_risk_panel(res: dict):
   </div>
   <div class="med-overall-content">
     <div class="med-score-hero">
-      <div class="med-score-hero-title">Stacking Context Assessment</div>
+      <div class="med-score-hero-title">EXPERIMENTAL WEIGHTED CONTEXT INDEX</div>
       <div class="med-score-hero-num">{final_pct:.2f}%</div>
-      <div class="med-score-badge {status_badge_cls}">{status}</div>
+      <div style="margin: 8px 0; font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);">
+        Context Classification: <span class="med-score-badge {status_badge_cls}" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">{status}</span>
+      </div>
       <div style="margin-top: 6px;">
-        <span class="med-provenance-pill pill-stacking">⚙️ Meta-Learner: Trained ML (Production-Eligible)</span>
+        <span class="med-provenance-pill pill-stacking">⚙️ Meta-Learner: TRAINED ML (Production-Eligible)</span>
+      </div>
+      <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic;">
+        This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.
       </div>
     </div>
     <div class="med-breakdown-box">
@@ -201,11 +213,16 @@ def render_overall_risk_panel(res: dict):
   </div>
   <div class="med-overall-content">
     <div class="med-score-hero">
-      <div class="med-score-hero-title">Experimental Weighted Context Index</div>
+      <div class="med-score-hero-title">EXPERIMENTAL WEIGHTED CONTEXT INDEX</div>
       <div class="med-score-hero-num">{final_pct:.2f}%</div>
-      <div class="med-score-badge {status_badge_cls}">{status}</div>
+      <div style="margin: 8px 0; font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);">
+        Context Classification: <span class="med-score-badge {status_badge_cls}" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">{status}</span>
+      </div>
       <div style="margin-top: 6px;">
-        <span class="med-provenance-pill pill-rule">Meta-Learner: Not Trained</span>
+        <span class="med-provenance-pill pill-rule">Meta-Learner: NOT TRAINED</span>
+      </div>
+      <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic;">
+        This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.
       </div>
     </div>
     <div class="med-breakdown-box">
@@ -220,15 +237,15 @@ def render_overall_risk_panel(res: dict):
         <span><b>{phys_pct:.1f}% × 0.40 = {contrib_p:.2f}%</b></span>
       </div>
       <div class="med-breakdown-item">
-        <span>Location Risk (25% Weight):</span>
+        <span>Location Context Risk (25% Weight):</span>
         <span><b>{loc_pct:.1f}% × 0.25 = {contrib_l:.2f}%</b></span>
       </div>
       <div class="med-breakdown-item">
-        <span>Environment Risk (35% Weight):</span>
+        <span>Environmental Context Risk (35% Weight):</span>
         <span><b>{env_pct:.1f}% × 0.35 = {contrib_e:.2f}%</b></span>
       </div>
       <div style="margin-top: 10px; font-size: 0.83rem; color: var(--text-secondary); font-style: italic;">
-        ℹ️ <b>Clarification:</b> This is a heuristic index, not a calibrated probability of physical threat.
+        ℹ️ <b>Clarification:</b> This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe.
       </div>
       <div class="med-rationale-note">
         <b>Decision Rationale:</b> {explanation_txt}
@@ -237,7 +254,6 @@ def render_overall_risk_panel(res: dict):
   </div>
 </div>"""
     st.html(rendered)
-    st.html(rendered)
 
 @st.cache_data(show_spinner=False)
 def cached_load_subject_data(subject_id: str):
@@ -245,6 +261,7 @@ def cached_load_subject_data(subject_id: str):
 
 @st.cache_resource
 def load_predictor():
+    """Initializes and caches the unified MultimodalThreatPredictor singleton (v2.1)."""
     return MultimodalThreatPredictor()
 
 predictor = load_predictor()
@@ -488,11 +505,20 @@ with tab1:
 </div>""")
 
         # 1. Automatic Time and Day Detection (Asia/Kolkata)
-        ist_time_info = predictor.env_engine.get_current_ist_time()
-        curr_time_disp = ist_time_info["time_str"]
-        curr_day_disp = ist_time_info["day_of_week"]
-        is_wknd = ist_time_info["is_weekend"]
-        hour_val = ist_time_info["hour_float"]
+        try:
+            if hasattr(predictor, "get_current_ist_time"):
+                ist_time_info = predictor.get_current_ist_time()
+            elif hasattr(predictor, "env_engine") and predictor.env_engine is not None and hasattr(predictor.env_engine, "get_current_ist_time"):
+                ist_time_info = predictor.env_engine.get_current_ist_time()
+            else:
+                ist_time_info = config.get_current_ist_time()
+        except Exception:
+            ist_time_info = config.get_current_ist_time()
+
+        curr_time_disp = ist_time_info.get("time_str", "12:00 PM IST")
+        curr_day_disp = ist_time_info.get("day_of_week", "Monday")
+        is_wknd = ist_time_info.get("is_weekend", 0)
+        hour_val = ist_time_info.get("hour_float", 12.0)
         wknd_tag = "Weekend" if is_wknd else "Weekday"
 
         # 2. Location Resolution (GPS vs Manual Fallback)
@@ -515,12 +541,22 @@ with tab1:
             loc_origin = "Manual Selection (GPS Unavailable)"
 
         # 3. Automatic AI Environmental Inference
-        env_pred = predictor.predict_environment_context(
-            location=active_env_location,
-            hour=hour_val,
-            day_of_week=curr_day_disp,
-            is_weekend=is_wknd
-        )
+        try:
+            env_pred = predictor.predict_environment_context(
+                location=active_env_location,
+                hour=hour_val,
+                day_of_week=curr_day_disp,
+                is_weekend=is_wknd
+            )
+        except Exception as e:
+            env_pred = {
+                "status": "UNAVAILABLE",
+                "error": str(e),
+                "message": f"Environmental inference pipeline error: {str(e)}",
+                "crowd_prediction": {"category": "UNKNOWN", "confidence_pct": 0.0, "model_name": "Unavailable"},
+                "lighting_prediction": {"category": "UNKNOWN", "confidence_pct": 0.0, "model_name": "Unavailable", "lux_estimate": None},
+                "calibrated_environmental_score": 0.20
+            }
 
         if env_pred.get("status") == "SUCCESS":
             st.session_state["env_score"] = env_pred["calibrated_environmental_score"]
@@ -561,9 +597,38 @@ with tab1:
   <strong>NOT LIVE SENSOR MEASUREMENT.</strong> Actual campus crowd and lighting conditions may differ from predictions.
 </div>""")
         else:
-            st.session_state["env_score"] = 0.20
-            st.html("""<div class='med-alert-error' style='font-size:0.8rem; margin-top:8px;'>
-  ⚠️ <strong>UNKNOWN</strong> — Environmental models unavailable or unsupported campus location.
+            st.session_state["env_score"] = env_pred.get("calibrated_environmental_score", 0.20)
+            crowd_res = env_pred.get("crowd_prediction", {})
+            light_res = env_pred.get("lighting_prediction", {})
+            crowd_cat = crowd_res.get("category", "UNKNOWN")
+            crowd_conf = crowd_res.get("confidence_pct", 0.0)
+            light_cat = light_res.get("category", "UNKNOWN")
+            light_conf = light_res.get("confidence_pct", 0.0)
+            warn_msg = env_pred.get("message") or env_pred.get("warning") or "Environmental models unavailable or unsupported campus location."
+
+            st.html(f"""<div style='margin-top: 6px;'>
+  <div class='med-metric-row'><span class='med-metric-label'>Location</span> <span class='med-metric-value med-metric-value-accent'>{active_env_location}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Location Mode</span> <span class='med-metric-value' style='font-size:0.8rem;'>{loc_origin}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Time (Asia/Kolkata)</span> <span class='med-metric-value'>{curr_time_disp}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Day of Week</span> <span class='med-metric-value'>{curr_day_disp} ({wknd_tag})</span></div>
+</div>
+
+<div style='display:flex; gap:8px; margin-top:10px;'>
+  <div style='flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px;'>
+    <div style='font-size:0.75rem; color:#888;'>Crowd Density</div>
+    <div style='font-size:1.05rem; font-weight:700; color:#aaa;'>{crowd_cat} <span style='font-size:0.75rem; color:#888;'>({crowd_conf:.1f}%)</span></div>
+    <div style='font-size:0.68rem; color:#ff9800; margin-top:2px;'>Unavailable</div>
+  </div>
+  <div style='flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px;'>
+    <div style='font-size:0.75rem; color:#888;'>Lighting Condition</div>
+    <div style='font-size:1.05rem; font-weight:700; color:#aaa;'>{light_cat} <span style='font-size:0.75rem; color:#888;'>({light_conf:.1f}%)</span></div>
+    <div style='font-size:0.68rem; color:#ff9800; margin-top:2px;'>Unavailable</div>
+  </div>
+</div>
+
+<div class='med-alert-warn' style='font-size:0.75rem; margin-top:8px; padding:6px 10px; line-height:1.3;'>
+  ⚠️ <strong>CONTEXT STATUS UNKNOWN:</strong> {warn_msg}<br>
+  No values fabricated. Modality assigned neutral default index (20.0%).
 </div>""")
 
         # Auto-update threat fusion if previously analyzed

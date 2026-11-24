@@ -41,7 +41,9 @@ class TestPredictorIntegration(unittest.TestCase):
         # Verify probability bounds and context status indicators
         self.assertGreaterEqual(res["threat_probability"], 0.0)
         self.assertLessEqual(res["threat_probability"], 1.0)
-        self.assertIn(res["threat_status"], ["SAFE", "RISKY", "STANDARD CONTEXT", "ELEVATED CONTEXT RISK"])
+        self.assertIn(res["threat_status"], ["STANDARD CONTEXT", "ELEVATED CONTEXT", "HIGH CONTEXT"])
+        self.assertIn(res["context_status"], ["STANDARD CONTEXT", "ELEVATED CONTEXT", "HIGH CONTEXT"])
+        self.assertIn(res["context_classification"], ["STANDARD CONTEXT", "ELEVATED CONTEXT", "HIGH CONTEXT"])
         self.assertFalse(res["is_meta_learner_trained"])
         self.assertEqual(res["meta_model_status"], "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED")
 

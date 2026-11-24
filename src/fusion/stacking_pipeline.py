@@ -291,7 +291,12 @@ class StackingEnsemblePipeline:
 
         # Baseline evaluation
         baseline_score = self.baseline.predict_score(p_physio, p_spatial, p_env)
-        baseline_status = "RISKY" if baseline_score >= self.threshold else "SAFE"
+        if baseline_score <= config.RISK_THRESHOLDS["LOW_MAX"]:
+            baseline_status = "STANDARD CONTEXT"
+        elif baseline_score <= config.RISK_THRESHOLDS["MEDIUM_MAX"]:
+            baseline_status = "ELEVATED CONTEXT"
+        else:
+            baseline_status = "HIGH CONTEXT"
 
         # Check if meta-learner has been trained
         is_trained = (
@@ -301,7 +306,12 @@ class StackingEnsemblePipeline:
 
         if is_trained:
             meta_prob = float(self.meta_learner.predict_proba(vec)[0, 1])
-            meta_status = "RISKY" if meta_prob >= self.threshold else "SAFE"
+            if meta_prob <= config.RISK_THRESHOLDS["LOW_MAX"]:
+                meta_status = "STANDARD CONTEXT"
+            elif meta_prob <= config.RISK_THRESHOLDS["MEDIUM_MAX"]:
+                meta_status = "ELEVATED CONTEXT"
+            else:
+                meta_status = "HIGH CONTEXT"
             meta_explanation = self.meta_learner.explain(sample_vec=vec[0])
             active_score = meta_prob
             active_status = meta_status

@@ -110,33 +110,10 @@ class EnvironmentalContextEngine:
     def get_current_ist_time() -> Dict[str, Any]:
         """
         Obtains the current system time in Asia/Kolkata timezone.
-        Extracts current hour (float and int), day of week, and weekend indicator.
-        Handles midnight boundaries correctly.
+        Delegates to centralized config.get_current_ist_time() to ensure consistency
+        across the entire platform and avoid duplicate time detection logic.
         """
-        try:
-            tz = ZoneInfo("Asia/Kolkata")
-            now = datetime.datetime.now(tz)
-        except Exception:
-            # Fallback using config helper or timedelta
-            now = config.get_campus_now()
-
-        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        dow_num = now.weekday()
-        dow_name = day_names[dow_num]
-        is_weekend = 1 if dow_num in [5, 6] else 0
-        hour_float = round(now.hour + now.minute / 60.0 + now.second / 3600.0, 4)
-
-        return {
-            "datetime": now,
-            "iso_string": now.isoformat(),
-            "time_str": now.strftime("%I:%M %p IST"),
-            "date_str": now.strftime("%Y-%m-%d"),
-            "hour_of_day": now.hour,
-            "hour_float": hour_float,
-            "day_of_week": dow_name,
-            "day_of_week_num": dow_num,
-            "is_weekend": is_weekend
-        }
+        return config.get_current_ist_time()
 
     def resolve_campus_location(
         self,

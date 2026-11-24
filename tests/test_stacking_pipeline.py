@@ -83,7 +83,7 @@ class TestStackingPipeline(unittest.TestCase):
         res = pipeline.predict(0.60, 0.70, 0.80)
         self.assertTrue(res["is_meta_learner_trained"])
         self.assertIsInstance(res["active_threat_probability"], float)
-        self.assertIn(res["active_threat_status"], ["SAFE", "RISKY"])
+        self.assertIn(res["active_threat_status"], ["STANDARD CONTEXT", "ELEVATED CONTEXT", "HIGH CONTEXT"])
 
     def test_artifact_save_and_load(self):
         """Verifies pipeline artifact persistence with version metadata."""

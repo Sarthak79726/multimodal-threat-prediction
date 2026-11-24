@@ -76,7 +76,7 @@ class TestProductionIntegrity(unittest.TestCase):
         self.assertFalse(res["is_meta_learner_trained"])
         self.assertEqual(res["meta_model_status"], "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED")
         self.assertEqual(res["active_model_name"], "Experimental Weighted Context Index")
-        self.assertIn(res["context_status"], ["STANDARD CONTEXT", "ELEVATED CONTEXT RISK"])
+        self.assertIn(res["context_status"], ["STANDARD CONTEXT", "ELEVATED CONTEXT", "HIGH CONTEXT"])
         self.assertIsNone(res["stacking_meta_probability"])
 
     def test_synthetic_training_workflow_outputs_only_to_simulation_directory(self):
@@ -163,11 +163,12 @@ class TestProductionIntegrity(unittest.TestCase):
         self.assertFalse(res["is_meta_learner_trained"])
         self.assertEqual(res["active_model_name"], "Experimental Weighted Context Index")
 
-        # Must include required notice and clarification
-        self.assertIn("A validated multimodal threat-prediction model is not currently available", res["explanation"])
-        self.assertIn("This is a heuristic index, not a calibrated probability of physical threat.", res["explanation"])
+        # Must include required context assessment explanation and clarification
+        self.assertIn("Context Assessment: The experimental weighted context index is", res["explanation"])
+        self.assertIn("This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe.", res["explanation"])
         self.assertIn("notice", res)
         self.assertIn("clarification", res)
+        self.assertIn("This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.", res["clarification"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,28 +16,39 @@
 
 <!-- OVERALL_PANEL_TEMPLATE_START -->
 <div class="med-overall-panel" contenteditable="false">
-  <div class="med-overall-header" contenteditable="false">Overall Risk Assessment</div>
+  <div class="med-overall-header" contenteditable="false">Overall Context Assessment</div>
   <div class="med-overall-content" contenteditable="false">
     <div class="med-score-hero" contenteditable="false">
-      <div class="med-score-hero-title" contenteditable="false">Prototype Threat-Risk Score</div>
+      <div class="med-score-hero-title" contenteditable="false">EXPERIMENTAL WEIGHTED CONTEXT INDEX</div>
       <div class="med-score-hero-num" contenteditable="false">{{final_score_pct}}%</div>
-      <div class="med-score-badge {{status_badge_cls}}" contenteditable="false">{{status}}</div>
+      <div style="margin: 8px 0; font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);" contenteditable="false">
+        Context Classification: <span class="med-score-badge {{status_badge_cls}}" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;" contenteditable="false">{{status}}</span>
+      </div>
+      <div style="margin-top: 6px;" contenteditable="false">
+        <span class="med-provenance-pill pill-rule" contenteditable="false">Meta-Learner: NOT TRAINED</span>
+      </div>
+      <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic;" contenteditable="false">
+        This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.
+      </div>
     </div>
     <div class="med-breakdown-box" contenteditable="false">
       <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;" contenteditable="false">
-        Branch Contribution Breakdown
+        Heuristic Weighting Breakdown (Reference Baseline)
       </div>
       <div class="med-breakdown-item" contenteditable="false">
         <span contenteditable="false">Physiological Stress (40% Weight):</span>
         <span contenteditable="false"><b>{{phys_pct}}% × 0.40 = {{contrib_p}}%</b></span>
       </div>
       <div class="med-breakdown-item" contenteditable="false">
-        <span contenteditable="false">Location Risk (25% Weight):</span>
+        <span contenteditable="false">Location Context Risk (25% Weight):</span>
         <span contenteditable="false"><b>{{loc_pct}}% × 0.25 = {{contrib_l}}%</b></span>
       </div>
       <div class="med-breakdown-item" contenteditable="false">
-        <span contenteditable="false">Environment Risk (35% Weight):</span>
+        <span contenteditable="false">Environmental Context Risk (35% Weight):</span>
         <span contenteditable="false"><b>{{env_pct}}% × 0.35 = {{contrib_e}}%</b></span>
+      </div>
+      <div style="margin-top: 10px; font-size: 0.83rem; color: var(--text-secondary); font-style: italic;" contenteditable="false">
+        ℹ️ <b>Clarification:</b> This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe.
       </div>
       <div class="med-rationale-note" contenteditable="false">
         <b contenteditable="false">Decision Rationale:</b> {{explanation_txt}}
