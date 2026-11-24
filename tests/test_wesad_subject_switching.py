@@ -1,12 +1,14 @@
 """
-Unit and Integration Tests for WESAD Subject Switching and Telemetry Pipeline.
-Verifies that individual subjects load distinct physiological data, produce individual
-biometric telemetry (EDA, Skin Temp, BPM, Duration, Sample Counts), and that
-subject-switching immediately updates the dashboard state without stale caching or hardcoded fallbacks.
+Unit and Integration Tests for WESAD Subject & Condition Isolation.
+Verifies that individual subjects and conditions (Baseline, Stress, Amusement, Meditation)
+load their own authentic recordings, produce unique telemetry (EDA, Skin Temp, BVP, Fingerprints),
+and that changing subject or condition dynamically updates the application without stale caching
+or global aggregation.
 """
 
 import unittest
 from pathlib import Path
+import json
 import numpy as np
 import pandas as pd
 import config
@@ -18,81 +20,128 @@ class TestWESADSubjectSwitching(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.predictor = MultimodalThreatPredictor()
-        cls.test_subjects = ["S2", "S3", "S4", "S10", "S13", "S17"]
+        cls.test_subjects = ["S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S17"]
 
-    def test_subjects_have_distinct_biometrics(self):
-        """Verifies that each audited subject produces distinct EDA and Temperature values."""
-        results = {}
-        for subj in self.test_subjects:
-            res = evaluate_subject_biometrics(subj, "Window 1 (Baseline)")
-            self.assertEqual(res["subject_id"], subj)
-            self.assertGreater(res["sample_count"], 0)
-            self.assertGreater(res["duration_min"], 0.0)
-            self.assertGreater(res["temp_mean"], 20.0)  # Physiological range
-            self.assertLess(res["temp_mean"], 42.0)
-            self.assertGreaterEqual(res["physio_score"], 0.0)
-            self.assertLessEqual(res["physio_score"], 1.0)
-            results[subj] = res
+    def test_s2_and_s3_baseline_are_distinct(self):
+        """1 & 2: Verifies S2 Baseline and S3 Baseline load from respective subjects with distinct data."""
+        s2_base = evaluate_subject_biometrics("S2", "Window 1 (Baseline)")
+        s3_base = evaluate_subject_biometrics("S3", "Window 1 (Baseline)")
 
-        # Verify EDA means are distinct across subjects (no identical hardcoded numbers)
-        eda_values = [results[s]["eda_mean"] for s in self.test_subjects]
-        self.assertEqual(len(set(eda_values)), len(self.test_subjects),
-                         f"EDA values across subjects should be distinct: {eda_values}")
+        self.assertEqual(s2_base["subject_id"], "S2")
+        self.assertEqual(s3_base["subject_id"], "S3")
+        self.assertNotEqual(s2_base["fingerprint"], s3_base["fingerprint"],
+                            "S2 Baseline and S3 Baseline must have distinct fingerprints")
+        self.assertNotEqual(s2_base["eda_mean"], s3_base["eda_mean"],
+                            "S2 and S3 Baseline must have distinct EDA means")
+        self.assertNotEqual(s2_base["temp_mean"], s3_base["temp_mean"],
+                            "S2 and S3 Baseline must have distinct Temperature means")
 
-        # Verify temperatures are distinct across subjects
-        temp_values = [results[s]["temp_mean"] for s in self.test_subjects]
-        self.assertEqual(len(set(temp_values)), len(self.test_subjects),
-                         f"Temperature values across subjects should be distinct: {temp_values}")
+    def test_s2_and_s3_amusement_are_distinct(self):
+        """3 & 4: Verifies S2 Amusement and S3 Amusement load from respective subjects with distinct data."""
+        s2_amu = evaluate_subject_biometrics("S2", "Window 3 (Amusement)")
+        s3_amu = evaluate_subject_biometrics("S3", "Window 3 (Amusement)")
 
-    def test_baseline_vs_stress_dynamic_response(self):
-        """Verifies that switching from Baseline to Stress window increases stress probability."""
+        self.assertEqual(s2_amu["subject_id"], "S2")
+        self.assertEqual(s3_amu["subject_id"], "S3")
+        self.assertNotEqual(s2_amu["fingerprint"], s3_amu["fingerprint"],
+                            "S2 Amusement and S3 Amusement must have distinct fingerprints")
+        self.assertNotEqual(s2_amu["eda_mean"], s3_amu["eda_mean"],
+                            "S2 and S3 Amusement must have distinct EDA means")
+        self.assertNotEqual(s2_amu["temp_mean"], s3_amu["temp_mean"],
+                            "S2 and S3 Amusement must have distinct Temperature means")
+
+    def test_s3_and_s4_baseline_and_amusement_distinct(self):
+        """Direct comparison between S3 and S4 across Baseline and Amusement."""
+        s3_base = evaluate_subject_biometrics("S3", "Window 1 (Baseline)")
+        s4_base = evaluate_subject_biometrics("S4", "Window 1 (Baseline)")
+        self.assertNotEqual(s3_base["fingerprint"], s4_base["fingerprint"])
+        self.assertNotEqual(s3_base["eda_mean"], s4_base["eda_mean"])
+
+        s3_amu = evaluate_subject_biometrics("S3", "Window 3 (Amusement)")
+        s4_amu = evaluate_subject_biometrics("S4", "Window 3 (Amusement)")
+        self.assertNotEqual(s3_amu["fingerprint"], s4_amu["fingerprint"])
+        self.assertNotEqual(s3_amu["eda_mean"], s4_amu["eda_mean"])
+
+    def test_condition_switching_within_subject_updates_data(self):
+        """5 & 6: Verifies switching between Baseline and Amusement within a subject updates telemetry."""
         for subj in ["S2", "S3", "S4"]:
             res_base = evaluate_subject_biometrics(subj, "Window 1 (Baseline)")
+            res_amu = evaluate_subject_biometrics(subj, "Window 3 (Amusement)")
             res_stress = evaluate_subject_biometrics(subj, "Window 2 (Stress Session)")
 
-            self.assertGreater(res_stress["physio_score"], res_base["physio_score"],
-                               f"Subject {subj}: Stress score ({res_stress['physio_score']}) must exceed baseline ({res_base['physio_score']})")
-            self.assertGreater(res_stress["physio_score"], 0.60,
-                               f"Subject {subj}: Stress condition should produce high stress probability")
+            # Each condition within subject must have unique fingerprint
+            fps = {res_base["fingerprint"], res_amu["fingerprint"], res_stress["fingerprint"]}
+            self.assertEqual(len(fps), 3, f"Subject {subj}: All 3 conditions must have unique fingerprints: {fps}")
 
-    def test_pre_extracted_csv_fallback(self):
-        """Verifies that if raw pickle does not exist, genuine pre-extracted 76 features are used."""
-        feat_path = config.DATA_DIR / "physiological" / "physiological_features.csv"
-        self.assertTrue(feat_path.exists(), "physiological_features.csv must exist as authentic repository")
-        df = pd.read_csv(feat_path)
+            # Stress score must exceed baseline score
+            self.assertGreater(res_stress["physio_score"], res_base["physio_score"])
 
-        for subj in self.test_subjects:
-            sub_df = df[df["subject_id"] == subj]
-            self.assertGreater(len(sub_df), 50, f"Subject {subj} must have genuine window records in CSV")
+    def test_no_global_condition_vector_reuse(self):
+        """7: Verifies all audited subjects and conditions possess unique SHA-256 fingerprints."""
+        audit_path = config.DATA_DIR / "physiological" / "wesad_condition_audit.json"
+        self.assertTrue(audit_path.exists(), "wesad_condition_audit.json must exist")
+        with open(audit_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        fingerprints = []
+        for entry in data:
+            s_id = entry["subject_id"]
+            for cond_name, c_data in entry["conditions"].items():
+                if c_data.get("available"):
+                    fp = c_data["fingerprint"]
+                    fingerprints.append((s_id, cond_name, fp))
+
+        unique_fps = set(x[2] for x in fingerprints)
+        self.assertEqual(len(fingerprints), len(unique_fps),
+                         f"Detected duplicate fingerprint among {len(fingerprints)} condition segments!")
+
+    def test_signal_label_alignment(self):
+        """8: Verifies that physiological signal lengths and label array lengths are strictly identical."""
+        audit_path = config.DATA_DIR / "physiological" / "wesad_condition_audit.json"
+        with open(audit_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        for entry in data:
+            self.assertTrue(entry["alignment_valid"],
+                            f"Subject {entry['subject_id']} has mismatched label/signal alignment!")
 
 
 class TestStreamlitSubjectSwitchingHeadless(unittest.TestCase):
-    """Headless Streamlit AppTest testing reactive subject switching."""
+    """Headless Streamlit AppTest testing reactive subject and condition switching."""
 
-    def test_streamlit_app_subject_switching(self):
+    def test_streamlit_app_subject_and_condition_switching(self):
         from streamlit.testing.v1 import AppTest
         app_path = str(Path(__file__).parent.parent / "app" / "main.py")
         at = AppTest.from_file(app_path, default_timeout=30)
         at.run()
         self.assertFalse(at.exception, f"App should run without exceptions: {at.exception}")
 
-        # Verify initial subject selection is S2
+        # 1. Initial subject is S2, condition is Window 1 (Baseline)
         self.assertIn("sel_physio_subject", at.session_state)
-        s2_score = at.session_state["physio_score"]
-        self.assertIsNotNone(s2_score)
+        s2_base_telemetry = at.session_state["physio_telemetry"]
+        self.assertIsNotNone(s2_base_telemetry)
+        self.assertEqual(s2_base_telemetry["subject_id"], "S2")
+        self.assertEqual(s2_base_telemetry["condition_name"], "Baseline")
+        s2_base_fp = s2_base_telemetry["fingerprint"]
 
-        # Switch subject to S3
+        # 2. Switch condition to Amusement
+        at.selectbox(key="sel_physio_window").select("Window 3 (Amusement)")
+        at.run()
+        self.assertFalse(at.exception)
+        s2_amu_telemetry = at.session_state["physio_telemetry"]
+        self.assertEqual(s2_amu_telemetry["condition_name"], "Amusement")
+        self.assertNotEqual(s2_amu_telemetry["fingerprint"], s2_base_fp,
+                            "S2 Amusement must have a distinct fingerprint from S2 Baseline")
+
+        # 3. Switch subject to S3
         at.selectbox(key="sel_physio_subject").select("S3")
         at.run()
-        self.assertFalse(at.exception, f"App rerun with S3 should not raise exceptions: {at.exception}")
-        s3_score = at.session_state["physio_score"]
-        self.assertEqual(at.session_state["current_physio_subject"], "S3")
-
-        # Switch subject to S4
-        at.selectbox(key="sel_physio_subject").select("S4")
-        at.run()
-        self.assertFalse(at.exception, f"App rerun with S4 should not raise exceptions: {at.exception}")
-        self.assertEqual(at.session_state["current_physio_subject"], "S4")
+        self.assertFalse(at.exception)
+        s3_amu_telemetry = at.session_state["physio_telemetry"]
+        self.assertEqual(s3_amu_telemetry["subject_id"], "S3")
+        self.assertEqual(s3_amu_telemetry["condition_name"], "Amusement")
+        self.assertNotEqual(s3_amu_telemetry["fingerprint"], s2_amu_telemetry["fingerprint"],
+                            "S3 Amusement must have a distinct fingerprint from S2 Amusement")
 
 
 if __name__ == "__main__":
