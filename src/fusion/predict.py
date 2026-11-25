@@ -395,7 +395,19 @@ class MultimodalThreatPredictor:
         # Handle complete failure / all modalities missing
         if all_modalities_missing or adaptive_eval["status"] == "UNAVAILABLE" or adaptive_eval["overall_context_index"] is None:
             return {
+                "status": "UNAVAILABLE",
+                "final_context_score": None,
+                "final_context_score_pct": None,
                 "fusion_mode": "UNAVAILABLE",
+                "modality_scores": adaptive_eval.get("modality_scores", {
+                    "physiological": None, "location": None, "spatial": None, "environment": None, "environmental": None
+                }),
+                "modality_reliability": adaptive_eval.get("modality_reliability", {
+                    "physiological": 0.0, "location": 0.0, "spatial": 0.0, "environment": 0.0, "environmental": 0.0
+                }),
+                "modality_freshness": adaptive_eval.get("modality_freshness", {
+                    "physiological": 0.0, "location": 0.0, "spatial": 0.0, "environment": 0.0, "environmental": 0.0
+                }),
                 "available_modalities": [],
                 "missing_modalities": ["physiological", "spatial", "environmental"],
                 "excluded_modalities": ["physiological", "spatial", "environmental"],
@@ -419,8 +431,12 @@ class MultimodalThreatPredictor:
                 "meta_model_status": "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED",
                 "learned_gating_status": "LEARNED GATING: NOT TRAINED",
                 "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
-                "adaptive_weights": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
-                "weights": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
+                "adaptive_weights": adaptive_eval.get("adaptive_weights", {
+                    "physiological": 0.0, "location": 0.0, "spatial": 0.0, "environment": 0.0, "environmental": 0.0
+                }),
+                "weights": adaptive_eval.get("adaptive_weights", {
+                    "physiological": 0.0, "location": 0.0, "spatial": 0.0, "environment": 0.0, "environmental": 0.0
+                }),
                 "baseline_weights": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
                 "partial_weights": {"physiological": 0.0, "location": 0.0},
                 "contributions": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
@@ -433,6 +449,8 @@ class MultimodalThreatPredictor:
                 "formula_str": "UNAVAILABLE (All modalities missing or invalid)",
                 "notice": "All input modalities are unavailable or invalid. Assessment cannot be computed.",
                 "explanation": "Assessment unavailable: None of the input modalities provide valid physical or contextual measurements. Zero risk is not fabricated.",
+                "decision_rationale": adaptive_eval.get("decision_rationale", "Assessment unavailable: None of the input modalities provide valid physical or contextual measurements. Zero risk is not fabricated."),
+                "meta_learner_status": "LEARNED GATING: NOT TRAINED",
                 "modalities_metadata": modalities_metadata,
                 "active_fusion_mode": "RELIABILITY_AWARE",
                 "active_fusion_mode_name": "Reliability-Aware Adaptive Fusion",
@@ -457,6 +475,7 @@ class MultimodalThreatPredictor:
         formula_str = adaptive_eval["formula_str"]
         avail_mods = adaptive_eval["available_modalities"]
         excl_mods = adaptive_eval["excluded_modalities"]
+        decision_rationale = adaptive_eval["decision_rationale"]
 
         # -----------------------------------------------------------------
         # BRANCH A: PARTIAL DUAL-BRANCH CONTEXT INDEX (ENV IS MISSING/UNKNOWN)
@@ -474,7 +493,13 @@ class MultimodalThreatPredictor:
             )
 
             return {
+                "status": "SUCCESS",
+                "final_context_score": active_score,
+                "final_context_score_pct": active_score_pct,
                 "fusion_mode": "PARTIAL_DUAL_BRANCH",
+                "modality_scores": adaptive_eval["modality_scores"],
+                "modality_reliability": adaptive_eval["modality_reliability"],
+                "modality_freshness": adaptive_eval["modality_freshness"],
                 "available_modalities": ["physiological", "spatial"],
                 "missing_modalities": ["environmental"],
                 "excluded_modalities": excl_mods,
@@ -539,9 +564,11 @@ class MultimodalThreatPredictor:
                 "active_model_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
                 "is_meta_learner_trained": False,
                 "meta_model_status": "NOT EVALUATED (MISSING ENVIRONMENTAL MODALITY)",
+                "meta_learner_status": "LEARNED GATING: NOT TRAINED",
                 "learned_gating_status": "LEARNED GATING: NOT TRAINED",
                 "notice": "A complete 3-branch context index is unavailable because environmental context is missing or unknown. Operating in fallback dual-branch mode.",
                 "clarification": "This partial index evaluates physiological biometrics and spatial location only. Environmental conditions (lighting, crowd density) are excluded.",
+                "decision_rationale": decision_rationale,
                 "stacking_meta_probability": None,
                 "stacking_meta_status": None,
                 "stacking_explainability": None,
@@ -586,19 +613,19 @@ class MultimodalThreatPredictor:
             )
         else:
             active_model_name = "Reliability-Aware Adaptive Context Index"
-            explanation = (
-                f"Context Assessment: The reliability-aware adaptive context index is {active_score_pct:.2f}% ({active_status}). "
-                f"It combines physiological stress ({phys_norm * 100.0:.1f}%, {alpha_p_pct:.1f}% adaptive weight), location context risk ({loc_norm * 100.0:.1f}%, {alpha_l_pct:.1f}% adaptive weight), "
-                f"and environmental context risk ({env_norm * 100.0:.1f}%, {alpha_e_pct:.1f}% adaptive weight) using data freshness and sensor quality weighting. "
-                f"Formula: {formula_str}. "
-                f"This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe."
-            )
+            explanation = decision_rationale
             clarification = (
                 "This index represents a reliability-aware adaptive combination of physiological, spatial and environmental context scores. It is not a validated threat prediction."
             )
 
         return {
+            "status": "SUCCESS",
+            "final_context_score": active_score,
+            "final_context_score_pct": active_score_pct,
             "fusion_mode": "THREE_BRANCH_FUSION",
+            "modality_scores": adaptive_eval["modality_scores"],
+            "modality_reliability": adaptive_eval["modality_reliability"],
+            "modality_freshness": adaptive_eval["modality_freshness"],
             "available_modalities": ["physiological", "spatial", "environmental"],
             "missing_modalities": [],
             "excluded_modalities": excl_mods,
@@ -632,6 +659,8 @@ class MultimodalThreatPredictor:
             "partial_dual_branch_index_pct": None,
             "notice": "A validated multimodal threat-prediction model is not currently available because synchronized observations and independently verified outcome labels have not yet been collected.",
             "clarification": clarification,
+            "decision_rationale": decision_rationale,
+            "meta_learner_status": "LEARNED GATING: NOT TRAINED",
             "stacking_meta_probability": None,
             "stacking_meta_status": None,
             "stacking_explainability": None,

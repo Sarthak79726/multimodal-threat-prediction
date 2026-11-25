@@ -462,18 +462,61 @@ class ReliabilityAwareAdaptiveFusionEngine:
             logger.warning("Adaptive fusion failed: All modalities are invalid or missing.")
             return {
                 "status": "UNAVAILABLE",
+                "final_context_score": None,
+                "final_context_score_pct": None,
                 "overall_context_index": None,
                 "overall_context_index_pct": None,
                 "context_classification": "UNAVAILABLE",
+                "fusion_mode": "UNAVAILABLE",
                 "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
                 "is_available": False,
                 "message": "All modalities are invalid, missing, or have zero reliability. Context index is UNAVAILABLE.",
+                "modality_scores": {
+                    "physiological": None,
+                    "location": None,
+                    "spatial": None,
+                    "environment": None,
+                    "environmental": None
+                },
+                "modality_reliability": {
+                    "physiological": 0.0,
+                    "location": 0.0,
+                    "spatial": 0.0,
+                    "environment": 0.0,
+                    "environmental": 0.0
+                },
+                "modality_freshness": {
+                    "physiological": 0.0,
+                    "location": 0.0,
+                    "spatial": 0.0,
+                    "environment": 0.0,
+                    "environmental": 0.0
+                },
                 "adaptive_weights": {
+                    "physiological": 0.0,
+                    "location": 0.0,
+                    "spatial": 0.0,
+                    "environment": 0.0,
+                    "environmental": 0.0
+                },
+                "adaptive_weights_rounded": {
+                    "physiological": 0.0,
+                    "location": 0.0,
+                    "spatial": 0.0,
+                    "environment": 0.0,
+                    "environmental": 0.0
+                },
+                "unnormalized_contributions": {
                     "physiological": 0.0,
                     "location": 0.0,
                     "environment": 0.0
                 },
                 "modality_contributions": {
+                    "physiological": 0.0,
+                    "location": 0.0,
+                    "environment": 0.0
+                },
+                "modality_contributions_pct": {
                     "physiological": 0.0,
                     "location": 0.0,
                     "environment": 0.0
@@ -486,6 +529,8 @@ class ReliabilityAwareAdaptiveFusionEngine:
                 "formula_str": "UNAVAILABLE (All modalities missing/invalid)",
                 "available_modalities": [],
                 "excluded_modalities": ["physiological", "location", "environment"],
+                "decision_rationale": "Assessment unavailable: All input modalities (Physiological, Spatial, Environmental) are missing, disconnected, or invalid. Zero risk is not fabricated.",
+                "meta_learner_status": "LEARNED GATING: NOT TRAINED",
                 "learned_gating_status": "LEARNED GATING: NOT TRAINED"
             }
 
@@ -493,9 +538,6 @@ class ReliabilityAwareAdaptiveFusionEngine:
         alpha_p = u_p / u_sum
         alpha_l = u_l / u_sum
         alpha_e = u_e / u_sum
-
-        # Guard exact sum = 1.0 to within floating point precision
-        weights_sum = alpha_p + alpha_l + alpha_e
 
         # 5. Calculate overall score R = sum(alpha_i * score_i)
         p_val = float(p_score) if (p_score is not None and rel_p.is_valid) else 0.0
@@ -533,23 +575,78 @@ class ReliabilityAwareAdaptiveFusionEngine:
 
         formula_str = f"R = {' + '.join(terms)}{ex_str} = {r_pct:.2f}%"
 
+        # Determine explicit fusion mode string
+        if len(available_modalities) == 3:
+            active_fusion_mode = "THREE_BRANCH_FUSION"
+        elif len(available_modalities) == 2:
+            active_fusion_mode = "PARTIAL_DUAL_BRANCH"
+        else:
+            active_fusion_mode = "SINGLE_BRANCH_FUSION"
+
+        # Build dynamic decision rationale from actual backend fusion result
+        rationale_parts = []
+        if "physiological" in available_modalities:
+            rationale_parts.append(f"physiological stress ({p_val * 100.0:.1f}%, {alpha_p * 100.0:.1f}% adaptive weight)")
+        if "location" in available_modalities:
+            rationale_parts.append(f"location context risk ({l_val * 100.0:.1f}%, {alpha_l * 100.0:.1f}% adaptive weight)")
+        if "environment" in available_modalities:
+            rationale_parts.append(f"environmental context risk ({e_val * 100.0:.1f}%, {alpha_e * 100.0:.1f}% adaptive weight)")
+
+        comb_desc = " and ".join(rationale_parts) if rationale_parts else "available context streams"
+        excl_desc = f" Excluded modalities: {', '.join([m.capitalize() for m in excluded_modalities])} (received 0% weight)." if excluded_modalities else ""
+
+        decision_rationale = (
+            f"Context Assessment: The reliability-aware adaptive context index is {r_pct:.2f}% ({classification}). "
+            f"It combines {comb_desc} using reliability-aware adaptive fusion with data freshness and sensor quality weighting.{excl_desc} "
+            f"Fusion method: {active_fusion_mode}. Formula: {formula_str}. "
+            f"This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe."
+        )
+
         return {
             "status": "SUCCESS",
+            "final_context_score": r_score,
+            "final_context_score_pct": r_pct,
             "overall_context_index": r_score,
             "overall_context_index_pct": r_pct,
             "context_classification": classification,
+            "fusion_mode": active_fusion_mode,
             "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
             "is_available": True,
             "message": "Evaluated via reliability-aware adaptive fusion with data freshness and sensor quality weighting.",
+            "modality_scores": {
+                "physiological": p_val if rel_p.is_valid else None,
+                "location": l_val if rel_l.is_valid else None,
+                "spatial": l_val if rel_l.is_valid else None,
+                "environment": e_val if rel_e.is_valid else None,
+                "environmental": e_val if rel_e.is_valid else None
+            },
+            "modality_reliability": {
+                "physiological": round(q_p, 4),
+                "location": round(q_l, 4),
+                "spatial": round(q_l, 4),
+                "environment": round(q_e, 4),
+                "environmental": round(q_e, 4)
+            },
+            "modality_freshness": {
+                "physiological": round(rel_p.freshness, 4),
+                "location": round(rel_l.freshness, 4),
+                "spatial": round(rel_l.freshness, 4),
+                "environment": round(rel_e.freshness, 4),
+                "environmental": round(rel_e.freshness, 4)
+            },
             "adaptive_weights": {
                 "physiological": float(alpha_p),
                 "location": float(alpha_l),
-                "environment": float(alpha_e)
+                "spatial": float(alpha_l),
+                "environment": float(alpha_e),
+                "environmental": float(alpha_e)
             },
             "adaptive_weights_rounded": {
                 "physiological": round(alpha_p, 4),
                 "location": round(alpha_l, 4),
-                "environment": round(alpha_e, 4)
+                "spatial": round(alpha_l, 4),
+                "environment": round(alpha_e, 4),
+                "environmental": round(alpha_e, 4)
             },
             "unnormalized_contributions": {
                 "physiological": round(u_p, 4),
@@ -574,5 +671,7 @@ class ReliabilityAwareAdaptiveFusionEngine:
             "formula_str": formula_str,
             "available_modalities": available_modalities,
             "excluded_modalities": excluded_modalities,
+            "decision_rationale": decision_rationale,
+            "meta_learner_status": "LEARNED GATING: NOT TRAINED",
             "learned_gating_status": "LEARNED GATING: NOT TRAINED"
         }
