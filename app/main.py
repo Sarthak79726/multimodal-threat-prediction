@@ -144,17 +144,7 @@ def render_header():
     st.html(header_html)
 
 def render_overall_risk_panel(res: dict):
-    # Single backend result extraction
-    mod_scores = res.get("modality_scores", {})
-    phys_norm = mod_scores.get("physiological", res.get("physiological_stress_score"))
-    loc_norm = mod_scores.get("location", mod_scores.get("spatial", res.get("location_risk_score")))
-    env_norm = mod_scores.get("environment", mod_scores.get("environmental", res.get("environment_risk_score")))
-
-    phys_pct = (float(phys_norm) * 100.0) if (phys_norm is not None and np.isfinite(phys_norm)) else 0.0
-    loc_pct = (float(loc_norm) * 100.0) if (loc_norm is not None and np.isfinite(loc_norm)) else 0.0
-    env_pct = (float(env_norm) * 100.0) if (env_norm is not None and np.isfinite(env_norm)) else None
-
-    # Retrieve real values computed by backend fusion engine
+    # Retrieve authoritative top-level fusion results
     overall_score = res.get("final_context_score")
     if overall_score is None:
         overall_score = res.get("overall_context_index")
@@ -165,33 +155,65 @@ def render_overall_risk_panel(res: dict):
     if overall_pct is None:
         overall_pct = res.get("overall_context_index_pct")
     if overall_pct is None and overall_score is not None:
-        overall_pct = overall_score * 100.0
+        overall_pct = round(overall_score * 100.0, 2)
     elif overall_pct is None:
         overall_pct = res.get("threat_score_pct")
 
-    status = str(res.get("context_status", res.get("context_classification", res.get("threat_status", "STANDARD CONTEXT"))))
+    status = str(res.get("context_classification", res.get("context_status", res.get("threat_status", "STANDARD CONTEXT"))))
     fusion_method = res.get("fusion_method", "RELIABILITY_AWARE_ADAPTIVE")
     learned_gating_status = res.get("meta_learner_status", res.get("learned_gating_status", "LEARNED GATING: NOT TRAINED"))
     formula_str = res.get("formula_str", "")
-    adaptive_weights = res.get("adaptive_weights") or res.get("weights") or {}
-    contribs_pct = res.get("modality_contributions_pct") or {}
-    reliabilities = res.get("modality_reliabilities") or {}
-    excluded_modalities = res.get("excluded_modalities") or res.get("missing_modalities") or []
     rationale_txt = html.escape(str(res.get("decision_rationale") or res.get("explanation") or ""))
 
-    if status == "HIGH CONTEXT":
-        status_badge_cls = "score-danger"
-    elif status == "ELEVATED CONTEXT":
-        status_badge_cls = "score-warn"
-    elif status == "UNAVAILABLE":
-        status_badge_cls = "score-danger"
-    else:
-        status_badge_cls = "score-safe"
+    # Single Authoritative Modality Result Dictionary
+    mods = res.get("modalities") or {}
+
+    def _get_mod(name_list, default_disp, default_prior):
+        for n in name_list:
+            if n in mods:
+                return mods[n]
+        # Legacy fallback if modalities dictionary is absent
+        ad_weights = res.get("adaptive_weights") or res.get("weights") or {}
+        mod_scores = res.get("modality_scores") or {}
+        contribs_pct = res.get("modality_contributions_pct") or {}
+        reliabilities = res.get("modality_reliabilities") or {}
+        excl = res.get("excluded_modalities") or res.get("missing_modalities") or []
+
+        primary_name = name_list[0]
+        alpha = float(ad_weights.get(primary_name, 0.0))
+        raw_s = mod_scores.get(primary_name)
+        is_ex = (primary_name in excl) or (alpha <= 0.0) or (raw_s is None)
+        rel_info = reliabilities.get(primary_name, {})
+        return {
+            "modality_name": primary_name,
+            "display_name": default_disp,
+            "raw_score": raw_s,
+            "score_pct": (float(raw_s) * 100.0) if raw_s is not None else None,
+            "is_available": not is_ex,
+            "composite_q": rel_info.get("composite_q", 1.0),
+            "freshness": rel_info.get("freshness", 1.0),
+            "age_seconds": rel_info.get("age_seconds", 0.0),
+            "normalized_weight": alpha,
+            "normalized_weight_pct": alpha * 100.0,
+            "weighted_contribution_pct": contribs_pct.get(primary_name, alpha * (float(raw_s) * 100.0 if raw_s is not None else 0.0)),
+            "is_excluded": is_ex,
+            "exclusion_reason": "Excluded from fusion" if is_ex else ""
+        }
+
+    mod_p = _get_mod(["physiological"], "Physiological Stress", 0.40)
+    mod_l = _get_mod(["location", "spatial"], "Location Context Risk", 0.25)
+    mod_e = _get_mod(["environment", "environmental"], "Environmental Context", 0.35)
+
+    is_all_excluded = (
+        overall_score is None or
+        status in ("UNAVAILABLE", "INSUFFICIENT DATA", "INSUFFICIENT_DATA") or
+        (mod_p.get("is_excluded", True) and mod_l.get("is_excluded", True) and mod_e.get("is_excluded", True))
+    )
 
     # =========================================================================
-    # CASE 1: ALL MODALITIES UNAVAILABLE (NO ZERO RISK FABRICATED)
+    # CASE 1: ALL MODALITIES EXCLUDED (INSUFFICIENT DATA)
     # =========================================================================
-    if overall_score is None or status == "UNAVAILABLE":
+    if is_all_excluded:
         rendered = f"""<div class="med-overall-panel">
   <div class="med-overall-header">
     Overall Context Assessment — Reliability-Aware Adaptive Multimodal Fusion
@@ -199,36 +221,36 @@ def render_overall_risk_panel(res: dict):
   <div class="med-overall-content">
     <div class="med-score-hero">
       <div class="med-score-hero-title">OVERALL CONTEXT ASSESSMENT</div>
-      <div class="med-score-hero-num" style="font-size: 1.8rem; color: #EF4444;">UNAVAILABLE</div>
+      <div class="med-score-hero-num" style="font-size: 1.8rem; color: #EF4444;">INSUFFICIENT DATA</div>
       <div style="margin: 8px 0; font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);">
-        Context Classification: <span class="med-score-badge score-danger" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">UNAVAILABLE</span>
+        Context Classification: <span class="med-score-badge score-danger" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">INSUFFICIENT DATA</span>
       </div>
       <div style="margin-top: 6px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;">
         <span class="med-provenance-pill pill-rule">Active: Reliability-Aware Adaptive Fusion</span>
         <span class="med-provenance-pill pill-rule">Learned Gating: NOT TRAINED</span>
       </div>
       <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic;">
-        No neutral values or zero-risk scores are fabricated when input measurements are unavailable or invalid.
+        No neutral values or zero-risk scores are fabricated when input measurements are unavailable, invalid, or excluded.
       </div>
     </div>
     <div class="med-breakdown-box">
       <div class="med-alert-warn" style="margin-bottom: 12px; font-size: 0.88rem; line-height: 1.45;">
-        ⚠️ <b>MULTIMODAL CONTEXT ASSESSMENT UNAVAILABLE:</b> All input modalities (Physiological, Spatial, Environmental) are either missing, disconnected, or invalid.
+        ⚠️ <b>MULTIMODAL CONTEXT ASSESSMENT INSUFFICIENT DATA:</b> All input modalities (Physiological, Spatial, Environmental) are either missing, disconnected, or invalid.
       </div>
       <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;">
         Modality Input Health &amp; Reliability Status
       </div>
       <div class="med-breakdown-item">
         <span>Physiological Stream:</span>
-        <span><b>UNAVAILABLE (Missing or invalid biometrics)</b></span>
+        <span><b>UNKNOWN / EXCLUDED ({mod_p.get('exclusion_reason', 'Missing or invalid biometrics')})</b></span>
       </div>
       <div class="med-breakdown-item">
         <span>Location Stream:</span>
-        <span><b>UNAVAILABLE (GPS coordinates missing)</b></span>
+        <span><b>UNKNOWN / EXCLUDED ({mod_l.get('exclusion_reason', 'GPS coordinates missing')})</b></span>
       </div>
       <div class="med-breakdown-item">
         <span>Environmental Stream:</span>
-        <span><b>UNAVAILABLE (Environmental context offline)</b></span>
+        <span><b>UNKNOWN / EXCLUDED ({mod_e.get('exclusion_reason', 'Environmental context offline')})</b></span>
       </div>
       <div class="med-rationale-note" style="margin-top: 10px;">
         <b>Decision Rationale:</b> {rationale_txt}
@@ -242,73 +264,52 @@ def render_overall_risk_panel(res: dict):
     # =========================================================================
     # CASE 2: ACTIVE RELIABILITY-AWARE ADAPTIVE FUSION
     # =========================================================================
-    # Extract actual adaptive weights from backend fusion result
-    alpha_p = float(adaptive_weights.get("physiological", 0.0))
-    alpha_l = float(adaptive_weights.get("location", adaptive_weights.get("spatial", 0.0)))
-    alpha_e = float(adaptive_weights.get("environment", adaptive_weights.get("environmental", 0.0)))
-
-    contrib_p_disp = contribs_pct.get("physiological", alpha_p * phys_pct)
-    contrib_l_disp = contribs_pct.get("location", contribs_pct.get("spatial", alpha_l * loc_pct))
-    contrib_e_disp = contribs_pct.get("environment", contribs_pct.get("environmental", (alpha_e * env_pct) if env_pct is not None else 0.0))
-
-    # Reliability & Freshness metrics from backend report
-    rel_p = reliabilities.get("physiological", {})
-    rel_l = reliabilities.get("location", reliabilities.get("spatial", {}))
-    rel_e = reliabilities.get("environment", reliabilities.get("environmental", {}))
-
-    q_dict = res.get("modality_reliability", {})
-    q_p = rel_p.get("composite_q", q_dict.get("physiological", 1.0))
-    q_l = rel_l.get("composite_q", q_dict.get("location", q_dict.get("spatial", 1.0)))
-    q_e = rel_e.get("composite_q", q_dict.get("environment", q_dict.get("environmental", 1.0)))
-
-    f_dict = res.get("modality_freshness", {})
-    fresh_p_pct = rel_p.get("freshness", f_dict.get("physiological", 1.0)) * 100.0
-    fresh_l_pct = rel_l.get("freshness", f_dict.get("location", f_dict.get("spatial", 1.0))) * 100.0
-    fresh_e_pct = rel_e.get("freshness", f_dict.get("environment", f_dict.get("environmental", 1.0))) * 100.0
-
-    age_p = rel_p.get("age_seconds", 0.0)
-    age_l = rel_l.get("age_seconds", 0.0)
-    age_e = rel_e.get("age_seconds", 0.0)
-
-    # Modality line displays
-    if "physiological" not in excluded_modalities and phys_norm is not None and alpha_p > 0.0:
-        phys_line = f"""<div class="med-breakdown-item">
-        <span>Physiological Stress ({alpha_p * 100.0:.1f}% Adaptive Weight · q={q_p:.2f} · Freshness {fresh_p_pct:.0f}% [age {age_p:.1f}s]):</span>
-        <span><b>{phys_pct:.1f}% × {alpha_p:.4f} = {contrib_p_disp:.2f}%</b></span>
-      </div>"""
+    if status == "HIGH CONTEXT":
+        status_badge_cls = "score-danger"
+    elif status == "ELEVATED CONTEXT":
+        status_badge_cls = "score-warn"
     else:
-        phys_line = f"""<div class="med-breakdown-item" style="color: var(--text-secondary); opacity: 0.75;">
-        <span>Physiological Stress (Excluded · 0.0% Weight):</span>
-        <span><b>UNKNOWN / EXCLUDED (Received zero contribution)</b></span>
+        status_badge_cls = "score-safe"
+
+    # Line formatting helper using authoritative modality dictionary
+    def _format_line(m_dict: dict, label: str) -> str:
+        is_excl = m_dict.get("is_excluded", False)
+        if is_excl:
+            reason = m_dict.get("exclusion_reason", "Excluded from fusion")
+            return f"""<div class="med-breakdown-item" style="color: var(--text-secondary); opacity: 0.85;">
+        <span>{label} (Excluded · 0.0% Weight):</span>
+        <span><b>UNKNOWN / EXCLUDED ({reason})</b></span>
+      </div>"""
+        alpha_pct = m_dict.get("normalized_weight_pct", m_dict.get("normalized_weight", 0.0) * 100.0)
+        alpha_val = m_dict.get("normalized_weight", 0.0)
+        q_val = m_dict.get("composite_q", 1.0)
+        fresh_pct = m_dict.get("freshness", 1.0) * 100.0
+        age_val = m_dict.get("age_seconds", 0.0)
+        score_val = m_dict.get("raw_score", 0.0)
+        score_pct = (score_val * 100.0) if score_val is not None else 0.0
+        contrib_disp = m_dict.get("weighted_contribution_pct", alpha_val * score_pct)
+
+        return f"""<div class="med-breakdown-item">
+        <span>{label} ({alpha_pct:.1f}% Adaptive Weight · q={q_val:.2f} · Freshness {fresh_pct:.0f}% [age {age_val:.1f}s]):</span>
+        <span><b>{score_pct:.1f}% × {alpha_val:.4f} = {contrib_disp:.2f}%</b></span>
       </div>"""
 
-    if "location" not in excluded_modalities and "spatial" not in excluded_modalities and loc_norm is not None and alpha_l > 0.0:
-        loc_line = f"""<div class="med-breakdown-item">
-        <span>Location Context Risk ({alpha_l * 100.0:.1f}% Adaptive Weight · q={q_l:.2f} · Freshness {fresh_l_pct:.0f}% [age {age_l:.1f}s]):</span>
-        <span><b>{loc_pct:.1f}% × {alpha_l:.4f} = {contrib_l_disp:.2f}%</b></span>
-      </div>"""
-    else:
-        loc_line = f"""<div class="med-breakdown-item" style="color: var(--text-secondary); opacity: 0.75;">
-        <span>Location Context Risk (Excluded · 0.0% Weight):</span>
-        <span><b>UNKNOWN / EXCLUDED (Received zero contribution)</b></span>
-      </div>"""
+    phys_line = _format_line(mod_p, "Physiological Stress")
+    loc_line = _format_line(mod_l, "Location Context Risk")
+    env_line = _format_line(mod_e, "Environmental Context")
 
-    if "environment" not in excluded_modalities and "environmental" not in excluded_modalities and env_pct is not None and alpha_e > 0.0:
-        env_line = f"""<div class="med-breakdown-item">
-        <span>Environmental Context ({alpha_e * 100.0:.1f}% Adaptive Weight · q={q_e:.2f} · Freshness {fresh_e_pct:.0f}% [age {age_e:.1f}s]):</span>
-        <span><b>{env_pct:.1f}% × {alpha_e:.4f} = {contrib_e_disp:.2f}%</b></span>
-      </div>"""
-    else:
-        env_line = f"""<div class="med-breakdown-item" style="color: var(--text-secondary); opacity: 0.75;">
-        <span>Environmental Context (Excluded · 0.0% Weight):</span>
-        <span><b>UNKNOWN / EXCLUDED (Received zero contribution)</b></span>
-      </div>"""
+    # Excluded modalities alert banner
+    excluded_list = []
+    if mod_p.get("is_excluded"):
+        excluded_list.append(f"Physiological ({mod_p.get('exclusion_reason', 'Excluded')})")
+    if mod_l.get("is_excluded"):
+        excluded_list.append(f"Location ({mod_l.get('exclusion_reason', 'Excluded')})")
+    if mod_e.get("is_excluded"):
+        excluded_list.append(f"Environmental ({mod_e.get('exclusion_reason', 'Excluded')})")
 
-    # Excluded modalities alert
-    if excluded_modalities:
-        ex_names = ", ".join([m.capitalize() for m in excluded_modalities])
+    if excluded_list:
         ex_alert = f"""<div class="med-alert-warn" style="margin-bottom: 10px; font-size: 0.84rem; line-height: 1.4;">
-        ℹ️ <b>Excluded Modality:</b> {ex_names} received zero weight due to missing or unverified measurements. Remaining valid modalities are re-normalized to 100%.
+        ℹ️ <b>Excluded Modality:</b> {', '.join(excluded_list)} received zero weight. Remaining valid modalities are re-normalized to 100%.
       </div>"""
     else:
         ex_alert = ""
@@ -617,7 +618,7 @@ if "gps_error_msg" not in st.session_state:
 if "gps_force_trigger" not in st.session_state:
     st.session_state["gps_force_trigger"] = 0
 if "env_score" not in st.session_state:
-    st.session_state["env_score"] = 0.10
+    st.session_state["env_score"] = None
 if "analyzed_threat" not in st.session_state:
     st.session_state["analyzed_threat"] = None
 if "gps_query_counter" not in st.session_state:
@@ -684,7 +685,7 @@ with tab1:
 
             # Auto update threat fusion if previously analyzed
             if st.session_state.get("analyzed_threat") is not None:
-                loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
+                loc_score_val = st.session_state.get("location_score")
                 st.session_state["analyzed_threat"] = predictor.predict_fusion(
                     physiological_stress_score=st.session_state["physio_score"],
                     location_risk_score=loc_score_val,
@@ -1182,7 +1183,7 @@ with tab1:
 
         # Auto-update threat fusion if previously analyzed
         if st.session_state.get("analyzed_threat") is not None:
-            loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
+            loc_score_val = st.session_state.get("location_score")
             try:
                 st.session_state["analyzed_threat"] = predictor.predict_fusion(
                     physiological_stress_score=st.session_state["physio_score"],
@@ -1264,7 +1265,7 @@ with tab1:
     col_center = st.columns([1, 2, 1])[1]
     with col_center:
         if st.button("🛡️ EVALUATE OVERALL CONTEXT RISK", key="btn_main_threat", use_container_width=True):
-            loc_score_val = st.session_state["location_score"] if st.session_state["location_score"] is not None else 0.15
+            loc_score_val = st.session_state.get("location_score")
             try:
                 res = predictor.predict_fusion(
                     physiological_stress_score=st.session_state["physio_score"],

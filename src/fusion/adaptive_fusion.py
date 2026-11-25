@@ -387,6 +387,39 @@ class ReliabilityAwareAdaptiveFusionEngine:
             warnings=warnings
         )
 
+    @staticmethod
+    def _determine_exclusion_reason(
+        modality_name: str,
+        score: Optional[float],
+        rel: ModalityReliabilityMetrics
+    ) -> str:
+        """Determines the explicit factual reason why a modality is excluded from fusion."""
+        if score is None:
+            if modality_name == "physiological":
+                return "Missing biometric telemetry"
+            elif modality_name in ("location", "spatial"):
+                return "Missing GPS / landmark coordinate"
+            elif modality_name in ("environment", "environmental"):
+                return "Environmental context offline or unavailable"
+            return "Missing input observation"
+        if not isinstance(score, (int, float)) or not np.isfinite(score) or float(score) < 0.0 or float(score) > 1.0:
+            return f"Invalid numerical observation ({score})"
+        if rel.source_reliability <= 0.0:
+            if modality_name == "physiological":
+                return "Biometric sensor disconnected"
+            elif modality_name in ("location", "spatial"):
+                return "GPS positioning unavailable"
+            elif modality_name in ("environment", "environmental"):
+                return "Environmental context engine offline"
+            return "Source reliability is zero"
+        if rel.is_stale or rel.freshness <= 0.001:
+            return f"Observation is stale (age {rel.age_seconds:.1f}s exceeds threshold {rel.tau_seconds:.1f}s)"
+        if not rel.is_valid or rel.validity <= 0.0:
+            return "Input flagged as invalid by reliability monitor"
+        if rel.composite_q <= 0.0:
+            return "Zero composite reliability (q = 0.00)"
+        return ""
+
     def fuse(
         self,
         p_score: Optional[float],
@@ -406,6 +439,7 @@ class ReliabilityAwareAdaptiveFusionEngine:
         2. Computes unnormalized contributions u_i = b_i * q_i using baseline priors b = [0.40, 0.25, 0.35].
         3. Normalizes alpha_i = u_i / sum(u_j).
         4. Calculates R = alpha_P * P + alpha_L * L + alpha_E * E.
+        5. Returns a single authoritative fusion result object with comprehensive per-modality details.
         """
         # 1. Modality Reliability Reports
         rel_p = self.evaluate_physiological_reliability(
@@ -439,38 +473,132 @@ class ReliabilityAwareAdaptiveFusionEngine:
         u_l = b_l * q_l
         u_e = b_e * q_e
 
-        u_sum = u_p + u_l + u_e
+        # Determine individual exclusion reasons
+        excl_reason_p = self._determine_exclusion_reason("physiological", p_score, rel_p)
+        excl_reason_l = self._determine_exclusion_reason("location", l_score, rel_l)
+        excl_reason_e = self._determine_exclusion_reason("environment", e_score, rel_e)
 
         available_modalities = []
-        if rel_p.is_valid and q_p > 0.0:
+        if rel_p.is_valid and q_p > 0.0 and not excl_reason_p:
             available_modalities.append("physiological")
-        if rel_l.is_valid and q_l > 0.0:
+        if rel_l.is_valid and q_l > 0.0 and not excl_reason_l:
             available_modalities.append("location")
-        if rel_e.is_valid and q_e > 0.0:
+        if rel_e.is_valid and q_e > 0.0 and not excl_reason_e:
             available_modalities.append("environment")
 
         excluded_modalities = []
         if "physiological" not in available_modalities:
             excluded_modalities.append("physiological")
+            if not excl_reason_p:
+                excl_reason_p = "Zero effective reliability"
         if "location" not in available_modalities:
             excluded_modalities.append("location")
+            if not excl_reason_l:
+                excl_reason_l = "Zero effective reliability"
         if "environment" not in available_modalities:
             excluded_modalities.append("environment")
+            if not excl_reason_e:
+                excl_reason_e = "Zero effective reliability"
+
+        u_sum = sum(
+            u for m, u in [("physiological", u_p), ("location", u_l), ("environment", u_e)]
+            if m in available_modalities
+        )
 
         # 3. Handle case where all modalities are invalid / missing
         if u_sum <= 0.0 or len(available_modalities) == 0:
-            logger.warning("Adaptive fusion failed: All modalities are invalid or missing.")
+            logger.warning("Adaptive fusion: All modalities are invalid, missing, or excluded.")
+            mod_p_dict = {
+                "modality_name": "physiological",
+                "display_name": "Physiological Stress",
+                "raw_score": float(p_score) if (p_score is not None and rel_p.is_valid) else None,
+                "score_pct": round(float(p_score) * 100.0, 2) if (p_score is not None and rel_p.is_valid) else None,
+                "is_available": False,
+                "is_valid": rel_p.is_valid,
+                "validity": round(rel_p.validity, 4),
+                "freshness": round(rel_p.freshness, 4),
+                "age_seconds": round(rel_p.age_seconds, 1),
+                "tau_seconds": round(rel_p.tau_seconds, 1),
+                "source_reliability": round(rel_p.source_reliability, 4),
+                "source_description": rel_p.source_description,
+                "composite_q": round(q_p, 4),
+                "baseline_prior": round(b_p, 4),
+                "effective_weight": round(u_p, 4),
+                "normalized_weight": 0.0,
+                "normalized_weight_pct": 0.0,
+                "weighted_contribution": 0.0,
+                "weighted_contribution_pct": 0.0,
+                "is_excluded": True,
+                "exclusion_reason": excl_reason_p,
+                "warnings": rel_p.warnings
+            }
+            mod_l_dict = {
+                "modality_name": "location",
+                "display_name": "Location Context Risk",
+                "raw_score": float(l_score) if (l_score is not None and rel_l.is_valid) else None,
+                "score_pct": round(float(l_score) * 100.0, 2) if (l_score is not None and rel_l.is_valid) else None,
+                "is_available": False,
+                "is_valid": rel_l.is_valid,
+                "validity": round(rel_l.validity, 4),
+                "freshness": round(rel_l.freshness, 4),
+                "age_seconds": round(rel_l.age_seconds, 1),
+                "tau_seconds": round(rel_l.tau_seconds, 1),
+                "source_reliability": round(rel_l.source_reliability, 4),
+                "source_description": rel_l.source_description,
+                "composite_q": round(q_l, 4),
+                "baseline_prior": round(b_l, 4),
+                "effective_weight": round(u_l, 4),
+                "normalized_weight": 0.0,
+                "normalized_weight_pct": 0.0,
+                "weighted_contribution": 0.0,
+                "weighted_contribution_pct": 0.0,
+                "is_excluded": True,
+                "exclusion_reason": excl_reason_l,
+                "warnings": rel_l.warnings
+            }
+            mod_e_dict = {
+                "modality_name": "environment",
+                "display_name": "Environmental Context",
+                "raw_score": float(e_score) if (e_score is not None and rel_e.is_valid) else None,
+                "score_pct": round(float(e_score) * 100.0, 2) if (e_score is not None and rel_e.is_valid) else None,
+                "is_available": False,
+                "is_valid": rel_e.is_valid,
+                "validity": round(rel_e.validity, 4),
+                "freshness": round(rel_e.freshness, 4),
+                "age_seconds": round(rel_e.age_seconds, 1),
+                "tau_seconds": round(rel_e.tau_seconds, 1),
+                "source_reliability": round(rel_e.source_reliability, 4),
+                "source_description": rel_e.source_description,
+                "composite_q": round(q_e, 4),
+                "baseline_prior": round(b_e, 4),
+                "effective_weight": round(u_e, 4),
+                "normalized_weight": 0.0,
+                "normalized_weight_pct": 0.0,
+                "weighted_contribution": 0.0,
+                "weighted_contribution_pct": 0.0,
+                "is_excluded": True,
+                "exclusion_reason": excl_reason_e,
+                "warnings": rel_e.warnings
+            }
+            modalities = {
+                "physiological": mod_p_dict,
+                "location": mod_l_dict,
+                "spatial": mod_l_dict,
+                "environment": mod_e_dict,
+                "environmental": mod_e_dict
+            }
             return {
                 "status": "UNAVAILABLE",
                 "final_context_score": None,
                 "final_context_score_pct": None,
                 "overall_context_index": None,
                 "overall_context_index_pct": None,
-                "context_classification": "UNAVAILABLE",
-                "fusion_mode": "UNAVAILABLE",
+                "context_classification": "INSUFFICIENT DATA",
+                "fusion_mode": "INSUFFICIENT_DATA",
                 "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
                 "is_available": False,
-                "message": "All modalities are invalid, missing, or have zero reliability. Context index is UNAVAILABLE.",
+                "message": "All modalities are invalid, missing, or have zero reliability. Context index is INSUFFICIENT DATA.",
+                "modalities": modalities,
                 "modality_scores": {
                     "physiological": None,
                     "location": None,
@@ -479,18 +607,18 @@ class ReliabilityAwareAdaptiveFusionEngine:
                     "environmental": None
                 },
                 "modality_reliability": {
-                    "physiological": 0.0,
-                    "location": 0.0,
-                    "spatial": 0.0,
-                    "environment": 0.0,
-                    "environmental": 0.0
+                    "physiological": round(q_p, 4),
+                    "location": round(q_l, 4),
+                    "spatial": round(q_l, 4),
+                    "environment": round(q_e, 4),
+                    "environmental": round(q_e, 4)
                 },
                 "modality_freshness": {
-                    "physiological": 0.0,
-                    "location": 0.0,
-                    "spatial": 0.0,
-                    "environment": 0.0,
-                    "environmental": 0.0
+                    "physiological": round(rel_p.freshness, 4),
+                    "location": round(rel_l.freshness, 4),
+                    "spatial": round(rel_l.freshness, 4),
+                    "environment": round(rel_e.freshness, 4),
+                    "environmental": round(rel_e.freshness, 4)
                 },
                 "adaptive_weights": {
                     "physiological": 0.0,
@@ -526,7 +654,7 @@ class ReliabilityAwareAdaptiveFusionEngine:
                     "location": rel_l.to_dict(),
                     "environment": rel_e.to_dict()
                 },
-                "formula_str": "UNAVAILABLE (All modalities missing/invalid)",
+                "formula_str": "INSUFFICIENT DATA (All modalities missing or invalid)",
                 "available_modalities": [],
                 "excluded_modalities": ["physiological", "location", "environment"],
                 "decision_rationale": "Assessment unavailable: All input modalities (Physiological, Spatial, Environmental) are missing, disconnected, or invalid. Zero risk is not fabricated.",
@@ -535,14 +663,14 @@ class ReliabilityAwareAdaptiveFusionEngine:
             }
 
         # 4. Normalize contributions alpha_i = u_i / sum(u_j)
-        alpha_p = u_p / u_sum
-        alpha_l = u_l / u_sum
-        alpha_e = u_e / u_sum
+        alpha_p = (u_p / u_sum) if "physiological" in available_modalities else 0.0
+        alpha_l = (u_l / u_sum) if "location" in available_modalities else 0.0
+        alpha_e = (u_e / u_sum) if "environment" in available_modalities else 0.0
 
         # 5. Calculate overall score R = sum(alpha_i * score_i)
-        p_val = float(p_score) if (p_score is not None and rel_p.is_valid) else 0.0
-        l_val = float(l_score) if (l_score is not None and rel_l.is_valid) else 0.0
-        e_val = float(e_score) if (e_score is not None and rel_e.is_valid) else 0.0
+        p_val = float(p_score) if (p_score is not None and rel_p.is_valid and "physiological" in available_modalities) else 0.0
+        l_val = float(l_score) if (l_score is not None and rel_l.is_valid and "location" in available_modalities) else 0.0
+        e_val = float(e_score) if (e_score is not None and rel_e.is_valid and "environment" in available_modalities) else 0.0
 
         contrib_p = alpha_p * p_val
         contrib_l = alpha_l * l_val
@@ -569,7 +697,7 @@ class ReliabilityAwareAdaptiveFusionEngine:
             terms.append(f"{alpha_e * 100.0:.1f}% × E ({e_val * 100.0:.1f}%)")
 
         if excluded_modalities:
-            ex_str = " [" + ", ".join([m.capitalize() for m in excluded_modalities]) + " Excluded]"
+            ex_str = " [" + ", ".join([f"{m.capitalize()} Excluded" for m in excluded_modalities]) + "]"
         else:
             ex_str = ""
 
@@ -583,6 +711,87 @@ class ReliabilityAwareAdaptiveFusionEngine:
         else:
             active_fusion_mode = "SINGLE_BRANCH_FUSION"
 
+        # Authoritative Modality Detail Objects
+        mod_p_dict = {
+            "modality_name": "physiological",
+            "display_name": "Physiological Stress",
+            "raw_score": p_val if "physiological" in available_modalities else None,
+            "score_pct": round(p_val * 100.0, 2) if "physiological" in available_modalities else None,
+            "is_available": ("physiological" in available_modalities),
+            "is_valid": rel_p.is_valid,
+            "validity": round(rel_p.validity, 4),
+            "freshness": round(rel_p.freshness, 4),
+            "age_seconds": round(rel_p.age_seconds, 1),
+            "tau_seconds": round(rel_p.tau_seconds, 1),
+            "source_reliability": round(rel_p.source_reliability, 4),
+            "source_description": rel_p.source_description,
+            "composite_q": round(q_p, 4),
+            "baseline_prior": round(b_p, 4),
+            "effective_weight": round(u_p, 4),
+            "normalized_weight": round(alpha_p, 4),
+            "normalized_weight_pct": round(alpha_p * 100.0, 2),
+            "weighted_contribution": round(contrib_p, 4),
+            "weighted_contribution_pct": round(contrib_p * 100.0, 2),
+            "is_excluded": ("physiological" not in available_modalities),
+            "exclusion_reason": excl_reason_p if ("physiological" not in available_modalities) else "",
+            "warnings": rel_p.warnings
+        }
+        mod_l_dict = {
+            "modality_name": "location",
+            "display_name": "Location Context Risk",
+            "raw_score": l_val if "location" in available_modalities else None,
+            "score_pct": round(l_val * 100.0, 2) if "location" in available_modalities else None,
+            "is_available": ("location" in available_modalities),
+            "is_valid": rel_l.is_valid,
+            "validity": round(rel_l.validity, 4),
+            "freshness": round(rel_l.freshness, 4),
+            "age_seconds": round(rel_l.age_seconds, 1),
+            "tau_seconds": round(rel_l.tau_seconds, 1),
+            "source_reliability": round(rel_l.source_reliability, 4),
+            "source_description": rel_l.source_description,
+            "composite_q": round(q_l, 4),
+            "baseline_prior": round(b_l, 4),
+            "effective_weight": round(u_l, 4),
+            "normalized_weight": round(alpha_l, 4),
+            "normalized_weight_pct": round(alpha_l * 100.0, 2),
+            "weighted_contribution": round(contrib_l, 4),
+            "weighted_contribution_pct": round(contrib_l * 100.0, 2),
+            "is_excluded": ("location" not in available_modalities),
+            "exclusion_reason": excl_reason_l if ("location" not in available_modalities) else "",
+            "warnings": rel_l.warnings
+        }
+        mod_e_dict = {
+            "modality_name": "environment",
+            "display_name": "Environmental Context",
+            "raw_score": e_val if "environment" in available_modalities else None,
+            "score_pct": round(e_val * 100.0, 2) if "environment" in available_modalities else None,
+            "is_available": ("environment" in available_modalities),
+            "is_valid": rel_e.is_valid,
+            "validity": round(rel_e.validity, 4),
+            "freshness": round(rel_e.freshness, 4),
+            "age_seconds": round(rel_e.age_seconds, 1),
+            "tau_seconds": round(rel_e.tau_seconds, 1),
+            "source_reliability": round(rel_e.source_reliability, 4),
+            "source_description": rel_e.source_description,
+            "composite_q": round(q_e, 4),
+            "baseline_prior": round(b_e, 4),
+            "effective_weight": round(u_e, 4),
+            "normalized_weight": round(alpha_e, 4),
+            "normalized_weight_pct": round(alpha_e * 100.0, 2),
+            "weighted_contribution": round(contrib_e, 4),
+            "weighted_contribution_pct": round(contrib_e * 100.0, 2),
+            "is_excluded": ("environment" not in available_modalities),
+            "exclusion_reason": excl_reason_e if ("environment" not in available_modalities) else "",
+            "warnings": rel_e.warnings
+        }
+        modalities = {
+            "physiological": mod_p_dict,
+            "location": mod_l_dict,
+            "spatial": mod_l_dict,
+            "environment": mod_e_dict,
+            "environmental": mod_e_dict
+        }
+
         # Build dynamic decision rationale from actual backend fusion result
         rationale_parts = []
         if "physiological" in available_modalities:
@@ -593,7 +802,13 @@ class ReliabilityAwareAdaptiveFusionEngine:
             rationale_parts.append(f"environmental context risk ({e_val * 100.0:.1f}%, {alpha_e * 100.0:.1f}% adaptive weight)")
 
         comb_desc = " and ".join(rationale_parts) if rationale_parts else "available context streams"
-        excl_desc = f" Excluded modalities: {', '.join([m.capitalize() for m in excluded_modalities])} (received 0% weight)." if excluded_modalities else ""
+
+        excl_parts = []
+        for m_name in ["physiological", "location", "environment"]:
+            if m_name in excluded_modalities:
+                r_reason = modalities[m_name]["exclusion_reason"]
+                excl_parts.append(f"{m_name.capitalize()} ({r_reason})")
+        excl_desc = f" Excluded modalities: {', '.join(excl_parts)} (received 0% weight)." if excl_parts else ""
 
         decision_rationale = (
             f"Context Assessment: The reliability-aware adaptive context index is {r_pct:.2f}% ({classification}). "
@@ -613,12 +828,13 @@ class ReliabilityAwareAdaptiveFusionEngine:
             "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
             "is_available": True,
             "message": "Evaluated via reliability-aware adaptive fusion with data freshness and sensor quality weighting.",
+            "modalities": modalities,
             "modality_scores": {
-                "physiological": p_val if rel_p.is_valid else None,
-                "location": l_val if rel_l.is_valid else None,
-                "spatial": l_val if rel_l.is_valid else None,
-                "environment": e_val if rel_e.is_valid else None,
-                "environmental": e_val if rel_e.is_valid else None
+                "physiological": p_val if "physiological" in available_modalities else None,
+                "location": l_val if "location" in available_modalities else None,
+                "spatial": l_val if "location" in available_modalities else None,
+                "environment": e_val if "environment" in available_modalities else None,
+                "environmental": e_val if "environment" in available_modalities else None
             },
             "modality_reliability": {
                 "physiological": round(q_p, 4),
