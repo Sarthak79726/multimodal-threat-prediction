@@ -38,9 +38,18 @@ header[data-testid="stHeader"] {
 }
 
 .block-container {
-  padding-top: 1.8rem !important;
+  padding-top: 1.5rem !important;
   padding-bottom: 2.5rem !important;
-  max-width: 1200px !important;
+  max-width: 1360px !important;
+  width: 95% !important;
+}
+
+@media (max-width: 1400px) {
+  .block-container {
+    max-width: 98% !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
 }
 
 /* Header Section */
@@ -378,7 +387,108 @@ div[data-baseweb="select"] * {
 div[data-baseweb="select"] input {
   caret-color: transparent !important;
   cursor: pointer !important;
-  pointer-events: none !important;
+}
+
+/* Radio Button & Options Styling - High Contrast & Light Theme Alignment */
+div[data-testid="stRadio"] {
+  margin-bottom: 12px !important;
+}
+
+/* Label above the radio group */
+div[data-testid="stRadio"] > label {
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
+  color: var(--text-primary) !important;
+  margin-bottom: 8px !important;
+  display: block !important;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+div[data-testid="stRadio"] > label p {
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
+  color: var(--text-primary) !important;
+  margin: 0 !important;
+}
+
+div[data-testid="stRadio"] div[role="radiogroup"] {
+  gap: 8px !important;
+}
+
+/* Individual Radio Option Containers inside the radiogroup */
+div[data-testid="stRadio"] div[role="radiogroup"] label[data-baseweb="radio"],
+div[data-testid="stRadio"] div[role="radiogroup"] label {
+  background-color: #FFFFFF !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 6px !important;
+  padding: 6px 14px !important;
+  margin: 3px 0 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  transition: all 0.15s ease-in-out !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+}
+
+/* Hover State */
+div[data-testid="stRadio"] div[role="radiogroup"] label[data-baseweb="radio"]:hover,
+div[data-testid="stRadio"] div[role="radiogroup"] label:hover {
+  background-color: #F1F5F9 !important;
+  border-color: var(--primary-accent) !important;
+}
+
+/* Selected / Checked State */
+div[data-testid="stRadio"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked),
+div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) {
+  background-color: #EFF6FF !important;
+  border-color: var(--primary-accent) !important;
+  box-shadow: 0 0 0 1px var(--primary-accent) !important;
+}
+
+/* Radio Option Text Styling - Ensure high-contrast navy text */
+div[data-testid="stRadio"] div[role="radiogroup"] label p,
+div[data-testid="stRadio"] div[role="radiogroup"] [data-testid="stMarkdownContainer"] p,
+div[data-testid="stRadio"] div[role="radiogroup"] span {
+  color: var(--text-primary) !important;
+  font-weight: 600 !important;
+  font-size: 0.88rem !important;
+  line-height: 1.4 !important;
+  margin: 0 0 0 6px !important;
+}
+
+/* Selected Radio Option Text */
+div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) p,
+div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) [data-testid="stMarkdownContainer"] p {
+  color: #1D4ED8 !important;
+  font-weight: 700 !important;
+}
+
+/* Radio Circle Icon Visibility */
+div[data-testid="stRadio"] svg,
+div[data-testid="stRadio"] input[type="radio"] {
+  accent-color: var(--primary-accent) !important;
+}
+
+/* Selectbox container & text styling */
+div[data-testid="stSelectbox"] label p {
+  font-size: 0.92rem !important;
+  font-weight: 700 !important;
+  color: var(--text-primary) !important;
+}
+
+div[data-baseweb="select"] > div {
+  background-color: #FFFFFF !important;
+  border-color: var(--border-color) !important;
+  border-radius: 6px !important;
+  color: var(--text-primary) !important;
+}
+
+div[data-baseweb="select"] span {
+  color: var(--text-primary) !important;
+  font-weight: 600 !important;
 }
 
 /* Dropdown popover list items */

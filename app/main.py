@@ -57,12 +57,11 @@ def load_css():
 
 load_css()
 
-# Client-side mobile hardening script to prevent text carets, accidental contentEditable, and mobile keyboard triggering on selectboxes
+# Client-side mobile hardening script to prevent text carets and accidental soft keyboards on selectboxes
 def inject_mobile_protections():
     protection_js = """<script>
 (function() {
   function enforceReadOnly() {
-    // 1. Ensure document is never in designMode or contentEditable
     try {
       if (document.designMode && document.designMode.toLowerCase() === 'on') {
         document.designMode = 'off';
@@ -72,34 +71,14 @@ def inject_mobile_protections():
       }
     } catch(e) {}
 
-    // 2. Ensure selectbox inputs are read-only to prevent Android Chrome soft-keyboard / text carets
+    // Suppress soft keyboard on mobile touch for selectboxes without blocking clicks
     const selectInputs = document.querySelectorAll('div[data-baseweb="select"] input');
     selectInputs.forEach(function(inp) {
-      if (!inp.readOnly) inp.readOnly = true;
-      if (inp.getAttribute('readonly') !== 'readonly') inp.setAttribute('readonly', 'readonly');
-      if (inp.getAttribute('inputmode') !== 'none') inp.setAttribute('inputmode', 'none');
-      if (inp.getAttribute('contenteditable') !== 'false') inp.setAttribute('contenteditable', 'false');
-
-      if (!inp._protectionAttached) {
-        inp._protectionAttached = true;
-        inp.addEventListener('beforeinput', function(e) {
-          e.preventDefault();
-        });
-        inp.addEventListener('keydown', function(e) {
-          const allowed = ['Tab', 'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-          if (allowed.includes(e.key) || [9, 13, 27, 37, 38, 39, 40].includes(e.keyCode)) {
-            return;
-          }
-          e.preventDefault();
-        });
-        inp.addEventListener('touchstart', function(e) {
-          this.readOnly = true;
-          this.setAttribute('inputmode', 'none');
-        }, { passive: true });
+      if (inp.getAttribute('inputmode') !== 'none') {
+        inp.setAttribute('inputmode', 'none');
       }
     });
 
-    // 3. Ensure dashboard cards, headings, and static metrics remain strictly read-only
     const staticContainers = document.querySelectorAll(
       '.med-header, .med-card, .med-overall-panel, .med-metric-row, .med-score-box, ' +
       '.med-breakdown-box, .med-rationale-note, [data-testid="stMarkdownContainer"], ' +
@@ -1415,6 +1394,12 @@ with tab2:
         cur_selected = st.session_state.get("selected_landmark_name", landmark_names[0])
         cur_idx = landmark_names.index(cur_selected) if cur_selected in landmark_names else 0
 
+        # Auto-initialize spatial analysis for the selected landmark preset if loc_res is missing
+        if not loc_res or not loc_res.get("nearest_landmark"):
+            target_lm = next((lm for lm in config.BIT_MESRA_LANDMARKS if lm["name"] == cur_selected), config.BIT_MESRA_LANDMARKS[0])
+            apply_landmark_selection(target_lm)
+            loc_res = st.session_state.get("location_res")
+
         # Dedicated widget key decoupled from external mutation
         selected_radio = st.radio(
             "Select Landmark Preset to Evaluate:",
@@ -1495,24 +1480,44 @@ with tab2:
             combined_df = map_df
 
         if HAS_PLOTLY:
-            fig = px.scatter_map(
-                combined_df,
-                lat="latitude",
-                lon="longitude",
-                hover_name="Name",
-                hover_data=["Type"],
-                color="Marker Type",
-                color_discrete_map={"Campus Landmark": "#3978C5", "User GPS Position": "#C44444"},
-                size=[14 if t == "User GPS Position" else 9 for t in combined_df["Marker Type"]],
-                zoom=14,
-                center={"lat": config.BIT_MESRA_CENTER["latitude"], "lon": config.BIT_MESRA_CENTER["longitude"]},
-                height=480,
-                title="BIT Mesra GPS Mapping"
-            )
-            fig.update_layout(
-                map_style="open-street-map",
-                margin={"r":0, "t":35, "l":0, "b":0}
-            )
+            if hasattr(px, "scatter_map"):
+                fig = px.scatter_map(
+                    combined_df,
+                    lat="latitude",
+                    lon="longitude",
+                    hover_name="Name",
+                    hover_data=["Type"],
+                    color="Marker Type",
+                    color_discrete_map={"Campus Landmark": "#3978C5", "User GPS Position": "#C44444"},
+                    size=[14 if t == "User GPS Position" else 9 for t in combined_df["Marker Type"]],
+                    zoom=14,
+                    center={"lat": config.BIT_MESRA_CENTER["latitude"], "lon": config.BIT_MESRA_CENTER["longitude"]},
+                    height=480,
+                    title="BIT Mesra GPS Mapping"
+                )
+                fig.update_layout(
+                    map_style="open-street-map",
+                    margin={"r":0, "t":35, "l":0, "b":0}
+                )
+            else:
+                fig = px.scatter_mapbox(
+                    combined_df,
+                    lat="latitude",
+                    lon="longitude",
+                    hover_name="Name",
+                    hover_data=["Type"],
+                    color="Marker Type",
+                    color_discrete_map={"Campus Landmark": "#3978C5", "User GPS Position": "#C44444"},
+                    size=[14 if t == "User GPS Position" else 9 for t in combined_df["Marker Type"]],
+                    zoom=14,
+                    center={"lat": config.BIT_MESRA_CENTER["latitude"], "lon": config.BIT_MESRA_CENTER["longitude"]},
+                    height=480,
+                    title="BIT Mesra GPS Mapping"
+                )
+                fig.update_layout(
+                    mapbox_style="open-street-map",
+                    margin={"r":0, "t":35, "l":0, "b":0}
+                )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.map(combined_df[["latitude", "longitude"]])
