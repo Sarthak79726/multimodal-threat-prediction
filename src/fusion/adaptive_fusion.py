@@ -412,12 +412,10 @@ class ReliabilityAwareAdaptiveFusionEngine:
             elif modality_name in ("environment", "environmental"):
                 return "Environmental context engine offline"
             return "Source reliability is zero"
-        if rel.is_stale or rel.freshness <= 0.001:
-            return f"Observation is stale (age {rel.age_seconds:.1f}s exceeds threshold {rel.tau_seconds:.1f}s)"
+        if rel.freshness <= 0.005 or rel.composite_q <= 0.0:
+            return f"Observation is expired (age {rel.age_seconds:.1f}s exceeds freshness window {rel.tau_seconds * 5.0:.1f}s)"
         if not rel.is_valid or rel.validity <= 0.0:
             return "Input flagged as invalid by reliability monitor"
-        if rel.composite_q <= 0.0:
-            return "Zero composite reliability (q = 0.00)"
         return ""
 
     def fuse(

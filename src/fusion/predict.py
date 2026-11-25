@@ -210,6 +210,29 @@ class MultimodalThreatPredictor:
         logger.info("predict_environment_context called: location='%s', hour=%s, day='%s', is_weekend=%s",
                     location, hour, day_of_week, is_weekend)
 
+        # Query live Open-Meteo meteorological API
+        weather_reading_dict = None
+        has_live_weather = False
+        try:
+            from src.ingestion.weather_client import OpenMeteoWeatherClient
+            weather_reading = OpenMeteoWeatherClient().get_current_weather()
+            if weather_reading is not None:
+                is_conn = (getattr(weather_reading.status, "value", str(weather_reading.status)) == "CONNECTED")
+                weather_reading_dict = {
+                    "status": "LIVE" if is_conn else str(getattr(weather_reading.status, "value", weather_reading.status)),
+                    "temperature_c": weather_reading.temperature_c,
+                    "relative_humidity_pct": weather_reading.relative_humidity_pct,
+                    "precipitation_mm": weather_reading.precipitation_mm,
+                    "cloud_cover_pct": weather_reading.cloud_cover_pct,
+                    "weather_desc": weather_reading.weather_desc,
+                    "is_day": weather_reading.is_day,
+                    "source": weather_reading.source,
+                    "timestamp": weather_reading.timestamp
+                }
+                has_live_weather = is_conn
+        except Exception as w_err:
+            logger.warning("predict_environment_context: OpenMeteo query warning: %s", w_err)
+
         if hasattr(self, "env_engine") and self.env_engine is not None and hasattr(self.env_engine, "predict_environment"):
             try:
                 res = self.env_engine.predict_environment(
@@ -220,6 +243,10 @@ class MultimodalThreatPredictor:
                 )
                 self._last_crowd_score = res.get("environmental_crowd_context_score")
                 self._last_lighting_score = res.get("environmental_lighting_context_score")
+
+                # Attach live weather observation
+                if weather_reading_dict is not None:
+                    res["weather_reading"] = weather_reading_dict
 
                 # Defensive score key alignment
                 env_score = res.get("environmental_context_score")
@@ -244,6 +271,49 @@ class MultimodalThreatPredictor:
                 return res
             except Exception as e:
                 logger.error("predict_environment unexpected error: %s", str(e), exc_info=True)
+
+        # Resilient fallback: If models are unavailable but live weather is connected, calculate weather-based context
+        if has_live_weather and weather_reading_dict:
+            time_info = self.get_current_ist_time()
+            effective_hour = hour if hour is not None else time_info["hour_float"]
+            h_mod = float(effective_hour) % 24.0
+            diurnal_factor = 0.35 if (h_mod >= 23.0 or h_mod <= 4.5) else (0.20 if (20.0 <= h_mod < 23.0 or 4.5 < h_mod <= 6.0) else 0.05)
+            p_mm = float(weather_reading_dict.get("precipitation_mm") or 0.0)
+            weather_vuln = 0.30 if p_mm > 5.0 else (0.18 if p_mm > 0.2 else 0.05)
+            calc_env_score = round(min(1.0, max(0.05, diurnal_factor + weather_vuln)), 4)
+            return {
+                "status": "SUCCESS",
+                "location": location or "BIT Mesra Campus",
+                "time_display": time_info.get("time_str", "12:00 PM IST"),
+                "hour_of_day": round(effective_hour, 2),
+                "day_of_week": day_of_week or time_info["day_of_week"],
+                "weekend_indicator": is_weekend if is_weekend is not None else time_info["is_weekend"],
+                "weather_reading": weather_reading_dict,
+                "crowd_prediction": {
+                    "category": "PENDING_DATASET_INTEGRATION",
+                    "confidence": 0.0,
+                    "confidence_pct": 0.0,
+                    "model_name": "Schedule Model (Pending real campus dataset integration)",
+                    "status": "AWAITING_REAL_DATASET"
+                },
+                "lighting_prediction": {
+                    "category": "Good" if diurnal_factor < 0.20 else "Dark",
+                    "confidence": 0.85,
+                    "confidence_pct": 85.0,
+                    "model_name": "Diurnal Schedule Model",
+                    "lux_estimate": 450.0 if diurnal_factor < 0.20 else 5.0,
+                    "status": "ACTIVE_ASTRONOMICAL"
+                },
+                "environmental_crowd_context_score": None,
+                "environmental_lighting_context_score": diurnal_factor,
+                "environmental_context_score": calc_env_score,
+                "calibrated_environmental_score": calc_env_score,
+                "environment_risk_score": calc_env_score,
+                "is_trained_ml": True,
+                "synthetic_provenance": "LIVE_API_AND_DIURNAL",
+                "disclaimer": "Live weather context from Open-Meteo API. Optical/acoustic IoT sensors awaiting hardware deployment.",
+                "warning": None
+            }
 
         # Defensive fallback when environmental engine is unavailable or uninitialized
         logger.warning("Environmental engine unavailable or uninitialized. Returning UNAVAILABLE fallback.")
@@ -480,75 +550,49 @@ class MultimodalThreatPredictor:
         decision_rationale = adaptive_eval["decision_rationale"]
 
         # -----------------------------------------------------------------
-        # BRANCH A: PARTIAL DUAL-BRANCH CONTEXT INDEX (ENV IS MISSING/UNKNOWN)
+        # BRANCH A: SINGLE-BRANCH CONTEXT ASSESSMENT (EXACTLY 1 MODALITY VALID)
         # -----------------------------------------------------------------
-        if not is_env_available or "environment" in excl_mods:
-            alpha_p_pct = round(alpha_p * 100.0, 2)
-            alpha_l_pct = round(alpha_l * 100.0, 2)
+        if len(avail_mods) == 1:
+            active_m = avail_mods[0]
+            m_dict = adaptive_eval["modalities"][active_m]
+            m_score = m_dict.get("raw_score")
+            m_pct = (float(m_score) * 100.0) if m_score is not None else 0.0
+
+            alias_map = {"physiological": "physiological", "location": "spatial", "environment": "environmental"}
+            avail_legacy = [alias_map.get(m, m) for m in avail_mods]
+            miss_legacy = [alias_map.get(m, m) for m in excl_mods]
 
             explanation = (
-                f"Partial Context Assessment: The partial dual-branch context index is {active_score_pct:.2f}% ({active_status}). "
-                f"It combines physiological stress ({phys_norm * 100.0:.1f}%, {alpha_p_pct:.2f}% re-normalized weight) and location context risk ({loc_norm * 100.0:.1f}%, {alpha_l_pct:.2f}% re-normalized weight). "
-                f"Environmental context is UNKNOWN/unavailable and is omitted without silent substitution. "
+                f"Single-Branch Context Assessment: Only {m_dict.get('display_name', active_m)} is available ({m_pct:.1f}% raw score, 100.0% normalized weight). "
+                f"Other modalities ({', '.join(excl_mods)}) are missing, invalid, or excluded without silent neutral substitution. "
                 f"Formula: {formula_str}. "
-                f"Limitations: Situational illumination and crowd density are not factored into this partial index. It describes contextual inputs only and does not establish whether a person or location is safe or unsafe."
+                f"Limitations: This single-branch assessment reflects one sensory modality only. Multi-branch contextual fusion is unavailable."
             )
 
             return {
                 "status": "SUCCESS",
                 "final_context_score": active_score,
                 "final_context_score_pct": active_score_pct,
-                "fusion_mode": "PARTIAL_DUAL_BRANCH",
+                "fusion_mode": "SINGLE_BRANCH_FUSION",
                 "modalities": adaptive_eval["modalities"],
                 "modality_scores": adaptive_eval["modality_scores"],
                 "modality_reliability": adaptive_eval["modality_reliability"],
                 "modality_freshness": adaptive_eval["modality_freshness"],
-                "available_modalities": ["physiological", "spatial"],
-                "missing_modalities": ["environmental"],
+                "available_modalities": avail_legacy,
+                "missing_modalities": miss_legacy,
                 "excluded_modalities": excl_mods,
-                # Base model scores
                 "physiological_stress_score": phys_norm,
                 "location_risk_score": loc_norm,
-                "environment_risk_score": None,
-                "environmental_context_score": None,
+                "environment_risk_score": env_norm,
+                "environmental_context_score": env_norm,
                 "environmental_crowd_context_score": None,
                 "environmental_lighting_context_score": None,
-                "environmental_model_provenance": "MISSING / UNKNOWN (Excluded from fusion)",
+                "environmental_model_provenance": "SINGLE_BRANCH_EVALUATION",
                 "modalities_metadata": modalities_metadata,
-                # Adaptive & Partial Dual-Branch Specifics
                 "overall_context_index": active_score,
                 "overall_context_index_pct": active_score_pct,
-                "partial_dual_branch_index": active_score,
-                "partial_dual_branch_index_pct": active_score_pct,
-                "partial_fusion_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
-                "partial_formula": formula_str,
-                "formula_str": formula_str,
-                "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
-                "adaptive_weights": adaptive_weights,
-                "weights": adaptive_weights,
-                "partial_weights": {
-                    "physiological": alpha_p,
-                    "location": alpha_l
-                },
-                "baseline_weights": {
-                    "physiological": alpha_p,
-                    "location": alpha_l,
-                    "environment": 0.0
-                },
-                "contributions": adaptive_eval["modality_contributions"],
-                "contributions_pct": adaptive_eval["modality_contributions_pct"],
-                "partial_contributions": {
-                    "physiological": contrib_p,
-                    "location": contrib_l
-                },
-                "partial_contributions_pct": {
-                    "physiological": round(contrib_p * 100.0, 2),
-                    "location": round(contrib_l * 100.0, 2)
-                },
-                "modality_contributions": adaptive_eval["modality_contributions"],
-                "modality_contributions_pct": adaptive_eval["modality_contributions_pct"],
-                "modality_reliabilities": adaptive_eval["modality_reliabilities"],
-                # Complete 3-branch index is explicitly None
+                "partial_dual_branch_index": None,
+                "partial_dual_branch_index_pct": None,
                 "experimental_context_index": None,
                 "experimental_context_index_pct": None,
                 "threat_probability": active_score,
@@ -556,30 +600,190 @@ class MultimodalThreatPredictor:
                 "threat_status": active_status,
                 "context_status": active_status,
                 "context_classification": active_status,
-                "active_model_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
+                "active_model_name": f"SINGLE-BRANCH CONTEXT ASSESSMENT ({active_m.upper()} ONLY)",
                 "is_meta_learner_trained": False,
-                "meta_model_status": "NOT EVALUATED (MISSING ENVIRONMENTAL MODALITY)",
+                "meta_model_status": "NOT EVALUATED (SINGLE MODALITY ACTIVE)",
                 "learned_gating_status": "LEARNED GATING: NOT TRAINED",
-                "notice": "A complete 3-branch context index is unavailable because environmental context is missing or unknown. Operating in fallback dual-branch mode.",
-                "clarification": "This partial index evaluates physiological biometrics and spatial location only. Environmental conditions (lighting, crowd density) are excluded.",
+                "meta_learner_status": "LEARNED GATING: NOT TRAINED",
+                "formula_str": formula_str,
+                "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
+                "adaptive_weights": adaptive_weights,
+                "weights": adaptive_weights,
+                "contributions": adaptive_eval["modality_contributions"],
+                "contributions_pct": adaptive_eval["modality_contributions_pct"],
+                "modality_contributions": adaptive_eval["modality_contributions"],
+                "modality_contributions_pct": adaptive_eval["modality_contributions_pct"],
+                "modality_reliabilities": adaptive_eval["modality_reliabilities"],
                 "decision_rationale": decision_rationale,
-                "stacking_meta_probability": None,
-                "stacking_meta_status": None,
-                "stacking_explainability": None,
-                "baseline_threat_probability": active_score,
-                "baseline_threat_score_pct": active_score_pct,
-                "baseline_status": active_status,
-                "threshold_used": threshold,
                 "explanation": explanation,
-                # Dynamic Multimodal Intelligence Enhancements
-                "active_fusion_mode": dynamic_eval["fusion_mode"],
-                "active_fusion_mode_name": dynamic_eval["fusion_mode_name"],
+                "threshold_used": threshold,
+                "active_fusion_mode": "RELIABILITY_AWARE",
+                "active_fusion_mode_name": "Reliability-Aware Single Branch Assessment",
                 "reliability_summary": dynamic_eval["reliability_summary"],
                 "candidate_risk_categories": dynamic_eval["candidate_risk_categories"],
                 "uncertainty_index": dynamic_eval["uncertainty_index"],
                 "dynamic_gating_details": dynamic_eval.get("dynamic_gating_details"),
                 "safety_policy": dynamic_eval["safety_policy"]
             }
+
+        # -----------------------------------------------------------------
+        # BRANCH B: PARTIAL DUAL-BRANCH CONTEXT INDEX (EXACTLY 2 MODALITIES VALID)
+        # -----------------------------------------------------------------
+        elif len(avail_mods) == 2:
+            if "physiological" in avail_mods and "location" in avail_mods:
+                alpha_p_pct = round(alpha_p * 100.0, 2)
+                alpha_l_pct = round(alpha_l * 100.0, 2)
+                phys_val_str = f"{phys_norm * 100.0:.1f}%" if phys_norm is not None else "0.0%"
+                loc_val_str = f"{loc_norm * 100.0:.1f}%" if loc_norm is not None else "0.0%"
+
+                explanation = (
+                    f"Partial Context Assessment: The partial dual-branch context index is {active_score_pct:.2f}% ({active_status}). "
+                    f"It combines physiological stress ({phys_val_str}, {alpha_p_pct:.2f}% re-normalized weight) and location context risk ({loc_val_str}, {alpha_l_pct:.2f}% re-normalized weight). "
+                    f"Environmental context is UNKNOWN/unavailable and is omitted without silent substitution. "
+                    f"Formula: {formula_str}. "
+                    f"Limitations: Situational illumination and crowd density are not factored into this partial index. It describes contextual inputs only and does not establish whether a person or location is safe or unsafe."
+                )
+
+                return {
+                    "status": "SUCCESS",
+                    "final_context_score": active_score,
+                    "final_context_score_pct": active_score_pct,
+                    "fusion_mode": "PARTIAL_DUAL_BRANCH",
+                    "modalities": adaptive_eval["modalities"],
+                    "modality_scores": adaptive_eval["modality_scores"],
+                    "modality_reliability": adaptive_eval["modality_reliability"],
+                    "modality_freshness": adaptive_eval["modality_freshness"],
+                    "available_modalities": ["physiological", "spatial"],
+                    "missing_modalities": ["environmental"],
+                    "excluded_modalities": excl_mods,
+                    "physiological_stress_score": phys_norm,
+                    "location_risk_score": loc_norm,
+                    "environment_risk_score": None,
+                    "environmental_context_score": None,
+                    "environmental_crowd_context_score": None,
+                    "environmental_lighting_context_score": None,
+                    "environmental_model_provenance": "MISSING / UNKNOWN (Excluded from fusion)",
+                    "modalities_metadata": modalities_metadata,
+                    "overall_context_index": active_score,
+                    "overall_context_index_pct": active_score_pct,
+                    "partial_dual_branch_index": active_score,
+                    "partial_dual_branch_index_pct": active_score_pct,
+                    "partial_fusion_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
+                    "partial_formula": formula_str,
+                    "formula_str": formula_str,
+                    "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
+                    "adaptive_weights": adaptive_weights,
+                    "weights": adaptive_weights,
+                    "partial_weights": {
+                        "physiological": alpha_p,
+                        "location": alpha_l
+                    },
+                    "baseline_weights": {
+                        "physiological": alpha_p,
+                        "location": alpha_l,
+                        "environment": 0.0
+                    },
+                    "contributions": adaptive_eval["modality_contributions"],
+                    "contributions_pct": adaptive_eval["modality_contributions_pct"],
+                    "partial_contributions": {
+                        "physiological": contrib_p,
+                        "location": contrib_l
+                    },
+                    "partial_contributions_pct": {
+                        "physiological": round(contrib_p * 100.0, 2),
+                        "location": round(contrib_l * 100.0, 2)
+                    },
+                    "modality_contributions": adaptive_eval["modality_contributions"],
+                    "modality_contributions_pct": adaptive_eval["modality_contributions_pct"],
+                    "modality_reliabilities": adaptive_eval["modality_reliabilities"],
+                    "experimental_context_index": None,
+                    "experimental_context_index_pct": None,
+                    "threat_probability": active_score,
+                    "threat_score_pct": active_score_pct,
+                    "threat_status": active_status,
+                    "context_status": active_status,
+                    "context_classification": active_status,
+                    "active_model_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
+                    "is_meta_learner_trained": False,
+                    "meta_model_status": "NOT EVALUATED (MISSING ENVIRONMENTAL MODALITY)",
+                    "learned_gating_status": "LEARNED GATING: NOT TRAINED",
+                    "meta_learner_status": "LEARNED GATING: NOT TRAINED",
+                    "notice": "A complete 3-branch context index is unavailable because environmental context is missing or unknown. Operating in fallback dual-branch mode.",
+                    "clarification": "This partial index evaluates physiological biometrics and spatial location only. Environmental conditions (lighting, crowd density) are excluded.",
+                    "decision_rationale": decision_rationale,
+                    "stacking_meta_probability": None,
+                    "stacking_meta_status": None,
+                    "stacking_explainability": None,
+                    "baseline_threat_probability": active_score,
+                    "baseline_threat_score_pct": active_score_pct,
+                    "baseline_status": active_status,
+                    "threshold_used": threshold,
+                    "explanation": explanation,
+                    "active_fusion_mode": dynamic_eval["fusion_mode"],
+                    "active_fusion_mode_name": dynamic_eval["fusion_mode_name"],
+                    "reliability_summary": dynamic_eval["reliability_summary"],
+                    "candidate_risk_categories": dynamic_eval["candidate_risk_categories"],
+                    "uncertainty_index": dynamic_eval["uncertainty_index"],
+                    "dynamic_gating_details": dynamic_eval.get("dynamic_gating_details"),
+                    "safety_policy": dynamic_eval["safety_policy"]
+                }
+            else:
+                alias_map = {"physiological": "physiological", "location": "spatial", "environment": "environmental"}
+                avail_legacy = [alias_map.get(m, m) for m in avail_mods]
+                miss_legacy = [alias_map.get(m, m) for m in excl_mods]
+                explanation = (
+                    f"Partial Dual-Branch Context Assessment: Evaluates {', '.join([adaptive_eval['modalities'][m]['display_name'] for m in avail_mods])} "
+                    f"({active_score_pct:.2f}%, {active_status}). Excluded: {', '.join(excl_mods)}. Formula: {formula_str}."
+                )
+                return {
+                    "status": "SUCCESS",
+                    "final_context_score": active_score,
+                    "final_context_score_pct": active_score_pct,
+                    "fusion_mode": "PARTIAL_DUAL_BRANCH",
+                    "modalities": adaptive_eval["modalities"],
+                    "modality_scores": adaptive_eval["modality_scores"],
+                    "modality_reliability": adaptive_eval["modality_reliability"],
+                    "modality_freshness": adaptive_eval["modality_freshness"],
+                    "available_modalities": avail_legacy,
+                    "missing_modalities": miss_legacy,
+                    "excluded_modalities": excl_mods,
+                    "physiological_stress_score": phys_norm,
+                    "location_risk_score": loc_norm,
+                    "environment_risk_score": env_norm,
+                    "environmental_context_score": env_norm,
+                    "modalities_metadata": modalities_metadata,
+                    "overall_context_index": active_score,
+                    "overall_context_index_pct": active_score_pct,
+                    "threat_probability": active_score,
+                    "threat_score_pct": active_score_pct,
+                    "threat_status": active_status,
+                    "context_status": active_status,
+                    "context_classification": active_status,
+                    "active_model_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX",
+                    "is_meta_learner_trained": False,
+                    "meta_model_status": "NOT EVALUATED",
+                    "learned_gating_status": "LEARNED GATING: NOT TRAINED",
+                    "meta_learner_status": "LEARNED GATING: NOT TRAINED",
+                    "formula_str": formula_str,
+                    "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
+                    "adaptive_weights": adaptive_weights,
+                    "weights": adaptive_weights,
+                    "contributions": adaptive_eval["modality_contributions"],
+                    "contributions_pct": adaptive_eval["modality_contributions_pct"],
+                    "modality_contributions": adaptive_eval["modality_contributions"],
+                    "modality_contributions_pct": adaptive_eval["modality_contributions_pct"],
+                    "modality_reliabilities": adaptive_eval["modality_reliabilities"],
+                    "decision_rationale": decision_rationale,
+                    "explanation": explanation,
+                    "threshold_used": threshold,
+                    "active_fusion_mode": dynamic_eval["fusion_mode"],
+                    "active_fusion_mode_name": dynamic_eval["fusion_mode_name"],
+                    "reliability_summary": dynamic_eval["reliability_summary"],
+                    "candidate_risk_categories": dynamic_eval["candidate_risk_categories"],
+                    "uncertainty_index": dynamic_eval["uncertainty_index"],
+                    "dynamic_gating_details": dynamic_eval.get("dynamic_gating_details"),
+                    "safety_policy": dynamic_eval["safety_policy"]
+                }
 
         # -----------------------------------------------------------------
         # BRANCH B: THREE-BRANCH CONTEXT FUSION (ALL 3 INPUTS PRESENT)

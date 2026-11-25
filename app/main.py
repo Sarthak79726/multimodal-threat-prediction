@@ -214,6 +214,7 @@ def render_overall_risk_panel(res: dict):
     # CASE 1: ALL MODALITIES EXCLUDED (INSUFFICIENT DATA)
     # =========================================================================
     if is_all_excluded:
+        rationale_txt = "Assessment unavailable: All input modalities (Physiological, Spatial, Environmental) are missing, disconnected, or invalid. Zero risk is not fabricated."
         rendered = f"""<div class="med-overall-panel">
   <div class="med-overall-header">
     Overall Context Assessment — Reliability-Aware Adaptive Multimodal Fusion
@@ -354,6 +355,84 @@ def render_overall_risk_panel(res: dict):
   </div>
 </div>"""
     st.html(rendered)
+
+def render_diagnostics_panel(res: dict, operating_mode: str = "Real Data Mode"):
+    """
+    Renders an in-depth presentation diagnostics panel detailing per-modality health,
+    sensor provenance, quality factors q_i, normalized weights alpha_i, and mathematical formulation.
+    """
+    mods = res.get("modalities") or {}
+    status = str(res.get("context_classification", "STANDARD CONTEXT"))
+    score_pct = res.get("final_context_score_pct")
+    score_disp = f"{score_pct:.2f}%" if score_pct is not None else "INSUFFICIENT DATA"
+
+    rows_html = ""
+    for m_key, m_label in [("physiological", "Physiological Stream"), ("location", "Location Stream"), ("environment", "Environmental Stream")]:
+        m_info = mods.get(m_key, {})
+        raw_s = m_info.get("raw_score")
+        raw_disp = f"{raw_s * 100.0:.2f}%" if raw_s is not None else "—"
+        is_excl = m_info.get("is_excluded", True)
+        status_badge = "<span style='color:#ef4444; font-weight:700;'>EXCLUDED</span>" if is_excl else "<span style='color:#10b981; font-weight:700;'>ACTIVE / VALID</span>"
+        v_val = m_info.get("validity", 0.0)
+        f_val = m_info.get("freshness", 0.0)
+        s_val = m_info.get("source_reliability", 0.0)
+        q_val = m_info.get("composite_q", 0.0)
+        w_val = m_info.get("normalized_weight_pct", 0.0)
+        c_val = m_info.get("weighted_contribution_pct", 0.0)
+        src_desc = m_info.get("source_description", "—")
+        excl_r = m_info.get("exclusion_reason", "None" if not is_excl else "Excluded from fusion")
+
+        rows_html += f"""<tr>
+            <td style='padding:6px 10px; font-weight:600;'>{m_label}</td>
+            <td style='padding:6px 10px; font-size:0.75rem;'>{src_desc}</td>
+            <td style='padding:6px 10px;'>{status_badge}</td>
+            <td style='padding:6px 10px; font-weight:700;'>{raw_disp}</td>
+            <td style='padding:6px 10px;'>{v_val:.2f}</td>
+            <td style='padding:6px 10px;'>{f_val:.2f}</td>
+            <td style='padding:6px 10px;'>{s_val:.2f}</td>
+            <td style='padding:6px 10px; font-weight:700; color:#00bcd4;'>{q_val:.3f}</td>
+            <td style='padding:6px 10px; font-weight:700; color:#38bdf8;'>{w_val:.1f}%</td>
+            <td style='padding:6px 10px; font-weight:700;'>{c_val:.2f}%</td>
+            <td style='padding:6px 10px; font-size:0.72rem; color:#f87171;'>{excl_r if is_excl else '—'}</td>
+        </tr>"""
+
+    panel_html = f"""<div style='background:rgba(15, 23, 42, 0.85); border:1px solid rgba(56, 189, 248, 0.3); border-radius:8px; padding:12px 16px; margin-top:16px;'>
+  <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; margin-bottom:10px;'>
+    <div style='font-weight:700; font-size:0.92rem; color:#38bdf8;'>
+      🔬 PRESENTATION DIAGNOSTICS &amp; MODALITY HEALTH MATRIX
+    </div>
+    <div style='font-size:0.78rem; color:#94a3b8;'>
+      Operating Mode: <strong style='color:#f8fafc;'>{operating_mode}</strong> · Assessment: <strong style='color:#38bdf8;'>{score_disp} ({status})</strong>
+    </div>
+  </div>
+  <div style='overflow-x:auto;'>
+    <table style='width:100%; border-collapse:collapse; font-size:0.78rem; text-align:left; color:#cbd5e1;'>
+      <thead>
+        <tr style='border-bottom:1px solid rgba(255,255,255,0.12); color:#94a3b8; font-size:0.72rem; text-transform:uppercase;'>
+          <th style='padding:6px 10px;'>Modality</th>
+          <th style='padding:6px 10px;'>Sensor Provenance</th>
+          <th style='padding:6px 10px;'>Health</th>
+          <th style='padding:6px 10px;'>Score</th>
+          <th style='padding:6px 10px;'>Validity (v)</th>
+          <th style='padding:6px 10px;'>Freshness (f)</th>
+          <th style='padding:6px 10px;'>Source Rel (s)</th>
+          <th style='padding:6px 10px;'>Quality (q)</th>
+          <th style='padding:6px 10px;'>Weight (α)</th>
+          <th style='padding:6px 10px;'>Contribution</th>
+          <th style='padding:6px 10px;'>Exclusion Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+  </div>
+  <div style='margin-top:10px; font-size:0.75rem; color:#94a3b8; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;'>
+    <span>⚡ <b>Level 1 Meta-Learner:</b> <span style='color:#fbbf24; font-weight:600;'>UNTRAINED</span> (Awaiting real synchronized multi-sensor threat dataset)</span>
+    <span>📐 <b>Adaptive Formulation:</b> <code>q_i = v_i × f_i × s_i</code>, <code>u_i = b_i × q_i</code>, <code>α_i = u_i / Σu_j</code>, <code>R = Σ α_i × s_i</code></span>
+  </div>
+</div>"""
+    st.html(panel_html)
 
 @st.cache_data(show_spinner=False)
 def cached_load_subject_data(subject_id: str):
@@ -647,6 +726,98 @@ if "selected_landmark_name" not in st.session_state or st.session_state["selecte
 # Render Header
 render_header()
 
+# Operating Mode Selection (Real Data Mode vs Presentation Demo Mode)
+st.html("<div style='margin-bottom: 6px;'></div>")
+mode_col1, mode_col2 = st.columns([1, 2])
+with mode_col1:
+    app_mode = st.radio(
+        "Application Operating Mode",
+        ["Real Data Mode", "Presentation Demo Mode"],
+        horizontal=True,
+        key="app_operating_mode"
+    )
+
+DEMO_SCENARIOS = {
+    "Scenario 1: Three-Branch Fusion — High Context (Elevated Stress + Remote Sector)": {
+        "subject": "S2",
+        "window": "Window 2 (Stress Session)",
+        "physio_score": 0.9386,
+        "physio_class": "STRESS",
+        "landmark": "H13",
+        "loc_score": 0.6000,
+        "env_score": 0.4200,
+        "weather_desc": "Clear sky (Night, 14.2°C, 80% RH)",
+        "crowd_cat": "Low (Remote Sector)",
+        "light_cat": "Dark (~4.0 lx)",
+        "summary": "Demonstrates full 3-branch adaptive fusion during elevated stress at an isolated campus sector at night. All three branches contribute."
+    },
+    "Scenario 2: Three-Branch Fusion — Standard Context (Baseline Non-Stress + Main Building)": {
+        "subject": "S2",
+        "window": "Window 1 (Baseline)",
+        "physio_score": 0.0006,
+        "physio_class": "NON-STRESS",
+        "landmark": "Main Building",
+        "loc_score": 0.2000,
+        "env_score": 0.1500,
+        "weather_desc": "Clear sky (Daytime, 22.5°C, 45% RH)",
+        "crowd_cat": "Medium",
+        "light_cat": "Good (~500 lx)",
+        "summary": "Demonstrates nominal campus baseline: non-stress biometric state in core security zone during daytime. Result is Standard Context (~10%)."
+    },
+    "Scenario 3: Partial Dual-Branch Fusion — Environmental Excluded (Biometric + Spatial Only)": {
+        "subject": "S3",
+        "window": "Window 3 (Amusement)",
+        "physio_score": 0.0035,
+        "physio_class": "NON-STRESS",
+        "landmark": "Sports Complex",
+        "loc_score": 0.4500,
+        "env_score": None,
+        "weather_desc": "Environmental stream offline / excluded",
+        "crowd_cat": "Unavailable",
+        "light_cat": "Unavailable",
+        "summary": "Demonstrates resilient 2-branch partial fusion when environmental sensors are offline. Weights re-normalize to 100% (61.5% P + 38.5% L)."
+    },
+    "Scenario 4: Single-Branch Assessment — Biometric Stress Telemetry Only": {
+        "subject": "S2",
+        "window": "Window 2 (Stress Session)",
+        "physio_score": 0.8500,
+        "physio_class": "STRESS",
+        "landmark": None,
+        "loc_score": None,
+        "env_score": None,
+        "weather_desc": "Offline",
+        "crowd_cat": "Offline",
+        "light_cat": "Offline",
+        "summary": "Demonstrates single-branch contextual assessment: only wearable biometrics active (100% weight). GPS and environmental are safely excluded."
+    },
+    "Scenario 5: Safety Policy Gate — All Streams Excluded (INSUFFICIENT DATA)": {
+        "subject": None,
+        "window": None,
+        "physio_score": None,
+        "physio_class": "UNKNOWN",
+        "landmark": None,
+        "loc_score": None,
+        "env_score": None,
+        "weather_desc": "Offline",
+        "crowd_cat": "Offline",
+        "light_cat": "Offline",
+        "summary": "Demonstrates mathematical safety policy: when all sensors are missing/invalid, system displays INSUFFICIENT DATA without fabricating a score."
+    }
+}
+
+if app_mode == "Presentation Demo Mode":
+    with mode_col2:
+        demo_scenario_key = st.selectbox(
+            "Select Presentation Demonstration Scenario",
+            list(DEMO_SCENARIOS.keys()),
+            key="demo_scenario_select"
+        )
+    active_demo = DEMO_SCENARIOS[demo_scenario_key]
+    st.html(f"""<div class='med-alert-warn' style='background:rgba(59, 130, 246, 0.12); border:1px solid #3b82f6; border-radius:8px; padding:8px 12px; margin-bottom:10px; font-size:0.83rem;'>
+🎯 <b>PRESENTATION DEMO FIXTURE ACTIVE:</b> {active_demo['summary']}<br>
+<span style='font-size:0.75rem; color:#94a3b8;'>All demonstration data represents authentic recorded WESAD biometrics and campus surveys. Simulated values are never described as live sensor measurements.</span>
+</div>""")
+
 # Main Tab Navigation
 tab1, tab2 = st.tabs(["🛡️ Threat Prediction Dashboard", "📍 BIT Mesra GPS & Spatial Analyzer"])
 
@@ -663,631 +834,397 @@ with tab1:
     <span class="med-card-title">1. Physiological Analysis</span>
     <span class="med-card-subtitle">WESAD Wearable Signals</span>
   </div>
-  <span class="med-provenance-pill pill-ml">⚡ WESAD-trained ML model — Physiological Stress Detection</span>
+  <span class="med-provenance-pill pill-ml">⚡ WESAD ML — Stress Detection</span>
 </div>""")
 
-        selected_subject = st.selectbox("Select Subject", config.ALL_SUBJECTS, index=0, key="sel_physio_subject")
-        session_option = st.selectbox("Select Recording Window", ["Window 1 (Baseline)", "Window 2 (Stress Session)", "Window 3 (Amusement)", "Window 4 (Meditation)"], index=0, key="sel_physio_window")
-
-        btn_clicked = st.button("Analyze Physiology", key="btn_physio", use_container_width=True)
-
-        curr_sub = st.session_state.get("current_physio_subject")
-        curr_win = st.session_state.get("current_physio_window")
-        telemetry = st.session_state.get("physio_telemetry")
-
-        if btn_clicked or (curr_sub != selected_subject) or (curr_win != session_option) or (telemetry is None):
-            telemetry = evaluate_subject_biometrics(selected_subject, session_option)
-            st.session_state["physio_score"] = telemetry["physio_score"]
+        if app_mode == "Presentation Demo Mode":
+            demo_sub = active_demo["subject"]
+            demo_win = active_demo["window"]
+            if demo_sub and demo_win:
+                st.caption(f"🔬 Demo Fixture: **{demo_sub}** — **{demo_win}**")
+                telemetry = evaluate_subject_biometrics(demo_sub, demo_win)
+                p_score_disp = active_demo["physio_score"]
+                p_class_disp = active_demo["physio_class"]
+            else:
+                telemetry = None
+                p_score_disp = None
+                p_class_disp = "EXCLUDED"
+            st.session_state["physio_score"] = p_score_disp
             st.session_state["physio_telemetry"] = telemetry
             st.session_state["physio_timestamp"] = time.time()
-            st.session_state["current_physio_subject"] = selected_subject
-            st.session_state["current_physio_window"] = session_option
+        else:
+            selected_subject = st.selectbox("Select Subject", config.ALL_SUBJECTS, index=0, key="sel_physio_subject")
+            session_option = st.selectbox("Select Recording Window", ["Window 1 (Baseline)", "Window 2 (Stress Session)", "Window 3 (Amusement)", "Window 4 (Meditation)"], index=0, key="sel_physio_window")
+            btn_clicked = st.button("Analyze Physiology", key="btn_physio", use_container_width=True)
 
-            # Auto update threat fusion if previously analyzed
-            if st.session_state.get("analyzed_threat") is not None:
-                loc_score_val = st.session_state.get("location_score")
-                st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                    physiological_stress_score=st.session_state["physio_score"],
-                    location_risk_score=loc_score_val,
-                    environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50,
-                    physio_telemetry=st.session_state.get("physio_telemetry"),
-                    spatial_analysis=st.session_state.get("location_res"),
-                    environmental_res=st.session_state.get("env_res"),
-                    physio_age_sec=max(0.0, time.time() - st.session_state.get("physio_timestamp", time.time())),
-                    spatial_age_sec=max(0.0, time.time() - st.session_state.get("gps_timestamp", time.time())),
-                    env_age_sec=max(0.0, time.time() - st.session_state.get("env_timestamp", time.time())),
-                    is_manual_override=bool(st.session_state.get("cb_manual_env_override") or st.session_state.get("location_override_active"))
-                )
+            curr_sub = st.session_state.get("current_physio_subject")
+            curr_win = st.session_state.get("current_physio_window")
+            telemetry = st.session_state.get("physio_telemetry")
 
-        phys_score = float(st.session_state["physio_score"])
-        phys_pct_str = f"{phys_score * 100:.2f}%"
-        pred_class = telemetry.get("predicted_class", "NON-STRESS" if phys_score < 0.50 else "STRESS")
-        badge_cls = "score-danger" if phys_score > 0.65 else ("score-warn" if phys_score > 0.35 else "score-safe")
+            if btn_clicked or (curr_sub != selected_subject) or (curr_win != session_option) or (telemetry is None):
+                telemetry = evaluate_subject_biometrics(selected_subject, session_option)
+                st.session_state["physio_score"] = telemetry["physio_score"]
+                st.session_state["physio_telemetry"] = telemetry
+                st.session_state["physio_timestamp"] = time.time()
+                st.session_state["current_physio_subject"] = selected_subject
+                st.session_state["current_physio_window"] = session_option
+                # Clear previous overall result so stale assessment is never displayed
+                st.session_state["analyzed_threat"] = None
 
-        st.html(f"""<div style='margin-top: 10px;'>
+            p_score_disp = st.session_state.get("physio_score")
+            p_class_disp = telemetry.get("predicted_class", "NON-STRESS") if telemetry else "EXCLUDED"
+
+        if telemetry is not None and p_score_disp is not None:
+            phys_score = float(p_score_disp)
+            phys_pct_str = f"{phys_score * 100:.2f}%"
+            badge_cls = "score-danger" if phys_score > 0.65 else ("score-warn" if phys_score > 0.35 else "score-safe")
+
+            st.html(f"""<div style='margin-top: 10px;'>
   <div class='med-metric-row'><span class='med-metric-label'>Subject ID</span> <span class='med-metric-value med-metric-value-accent'>{telemetry['subject_id']}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Recording Window</span> <span class='med-metric-value'>{telemetry['session_option']}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Model Classification</span> <span class='med-metric-value' style='font-weight:700;'>{pred_class}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Model Classification</span> <span class='med-metric-value' style='font-weight:700;'>{p_class_disp}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Data Fingerprint</span> <span class='med-metric-value' style='font-family: monospace; font-size: 0.75rem; color: #4338ca;'>SHA-256: {telemetry['fingerprint']}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Estimated Heart Rate</span> <span class='med-metric-value'>{telemetry['heart_rate_bpm']} BPM</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Chest EDA Mean</span> <span class='med-metric-value'>{telemetry['eda_mean']} µS</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Skin Temperature</span> <span class='med-metric-value'>{telemetry['temp_mean']} °C</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Wrist BVP Mean</span> <span class='med-metric-value'>{telemetry['bvp_mean']}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Condition Data</span> <span class='med-metric-value'>{telemetry['condition_duration_sec']}s ({telemetry['sample_count']:,} samples)</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Total Subject Data</span> <span class='med-metric-value'>{telemetry['duration_min']} min</span></div>
 </div>""")
 
-        st.html(f"""<div class="med-score-box">
+            st.html(f"""<div class="med-score-box">
   <div class="med-score-label">Physiological Stress Probability & Class</div>
-  <div class="med-score-badge {badge_cls}">{phys_pct_str} ({pred_class})</div>
+  <div class="med-score-badge {badge_cls}">{phys_pct_str} ({p_class_disp})</div>
 </div>""")
 
-        if HAS_PLOTLY and telemetry.get("ecg_waveform_preview"):
-            with st.expander("📈 View Physiological Signal Waveform", expanded=False):
-                ecg_y = telemetry["ecg_waveform_preview"]
-                t_ecg = np.linspace(0, 5, len(ecg_y))
-                fig_signal = go.Figure()
-                fig_signal.add_trace(go.Scatter(
-                    x=t_ecg, y=ecg_y,
-                    mode="lines",
-                    line=dict(color="#2563eb", width=1.5),
-                    name="Chest ECG (mV)"
-                ))
-                fig_signal.update_layout(
-                    title=f"WESAD {selected_subject}: {telemetry['condition_name']} 5s ECG Signal ({phys_pct_str})",
-                    xaxis_title="Time (seconds)",
-                    yaxis_title="ECG (mV)",
-                    height=200,
-                    margin=dict(l=15, r=15, t=30, b=20),
-                    plot_bgcolor="#f8fafc",
-                    paper_bgcolor="#ffffff"
-                )
-                st.plotly_chart(fig_signal, use_container_width=True)
+            if HAS_PLOTLY and telemetry.get("ecg_waveform_preview"):
+                with st.expander("📈 View Physiological Signal Waveform", expanded=False):
+                    ecg_y = telemetry["ecg_waveform_preview"]
+                    t_ecg = np.linspace(0, 5, len(ecg_y))
+                    fig_signal = go.Figure()
+                    fig_signal.add_trace(go.Scatter(
+                        x=t_ecg, y=ecg_y,
+                        mode="lines",
+                        line=dict(color="#2563eb", width=1.5),
+                        name="Chest ECG (mV)"
+                    ))
+                    fig_signal.update_layout(
+                        title=f"WESAD {telemetry['subject_id']}: 5s ECG Signal ({phys_pct_str})",
+                        xaxis_title="Time (seconds)",
+                        yaxis_title="ECG (mV)",
+                        height=180,
+                        margin=dict(l=15, r=15, t=30, b=20),
+                        plot_bgcolor="#f8fafc",
+                        paper_bgcolor="#ffffff"
+                    )
+                    st.plotly_chart(fig_signal, use_container_width=True)
 
-        st.html(f"""<div style='font-size: 0.68rem; color: #6b7280; margin-top: 4px; text-align: right;'>
-  ⚡ Pipeline: {telemetry['provenance']}
+            prov_tag = "🔬 Authentic WESAD Dataset Replay (Wearable Disconnected)" if app_mode != "Presentation Demo Mode" else "🔬 Presentation Demo Fixture (WESAD Replay)"
+            st.html(f"""<div style='font-size: 0.68rem; color: #6b7280; margin-top: 4px; text-align: right;'>
+  ⚡ {prov_tag}
+</div>""")
+        else:
+            st.html("""<div style='margin-top: 14px;'>
+  <div class='med-alert-warn' style='font-size:0.8rem;'>
+    ⚠️ <b>BIOMETRIC STREAM EXCLUDED:</b> Telemetry is disconnected or unselected. No stress probability is computed.
+  </div>
+</div>
+<div class="med-score-box">
+  <div class="med-score-label">Physiological Stress Probability</div>
+  <div class="med-score-badge score-warn">UNKNOWN / EXCLUDED</div>
 </div>""")
 
-    # CARD 2 — CURRENT LOCATION (LIVE BROWSER GPS)
+    # CARD 2 — CURRENT LOCATION (GPS / CAMPUS LANDMARK)
     with col2:
         st.html("""<div class="med-card-header">
   <div>
     <span class="med-card-title">2. Current Location</span>
-    <span class="med-card-subtitle">Browser Geolocation</span>
+    <span class="med-card-subtitle">GPS & Campus Landmark</span>
   </div>
-  <span class="med-provenance-pill pill-rule">📐 Deterministic Geospatial Context Engine</span>
+  <span class="med-provenance-pill pill-rule">📐 Geospatial Context Engine</span>
 </div>""")
-
-        # Render custom reliable GPS sensor component
-        if gps_sensor is not None:
-            gps_payload = gps_sensor(
-                key="live_gps_sensor",
-                force_request_id=st.session_state.get("gps_force_trigger", 0),
-                initial_status=st.session_state.get("gps_status", "OFF")
-            )
-        else:
-            gps_payload = None
 
         now_campus = config.get_campus_now()
         calc_hour = st.session_state.get("client_hour") or (now_campus.hour + now_campus.minute / 60.0)
 
-        if gps_payload and isinstance(gps_payload, dict):
-            p_status = gps_payload.get("status")
-            if "client_hour" in gps_payload and gps_payload["client_hour"] is not None:
-                st.session_state["client_hour"] = float(gps_payload["client_hour"])
-            if "client_time_str" in gps_payload and gps_payload["client_time_str"] is not None:
-                st.session_state["client_time_str"] = str(gps_payload["client_time_str"])
-
-            if p_status == "SUCCESS" and "coords" in gps_payload:
-                coords = gps_payload["coords"]
-                r_lat = float(coords["latitude"])
-                r_lon = float(coords["longitude"])
-                r_acc = float(coords.get("accuracy", 10.0))
-                r_ts = gps_payload.get("timestamp")
-                is_cached = bool(gps_payload.get("is_cached", False))
-
-                raw_gps_analysis = campus_analyzer.analyze_gps(
-                    lat=r_lat,
-                    lon=r_lon,
-                    accuracy=r_acc,
-                    timestamp=r_ts,
-                    time_of_day_hour=calc_hour
-                )
-
-                st.session_state["gps_status"] = raw_gps_analysis["status"]
-                st.session_state["gps_raw_res"] = raw_gps_analysis
-                st.session_state["gps_detected_landmark"] = raw_gps_analysis["nearest_landmark"]["name"] if raw_gps_analysis.get("nearest_landmark") else None
-                st.session_state["location_is_cached"] = is_cached
-                st.session_state["gps_error_msg"] = None
-            elif p_status in ["PERMISSION_DENIED", "POSITION_UNAVAILABLE", "TIMEOUT", "ERROR", "NOT_SUPPORTED"]:
-                st.session_state["gps_status"] = p_status
-                st.session_state["gps_raw_res"] = None
-                st.session_state["gps_detected_landmark"] = None
-                st.session_state["gps_error_msg"] = gps_payload.get("message", "GPS acquisition failed.")
-
-        # Provide working Python Retry button if GPS encountered error/timeout
-        if st.session_state["gps_status"] in ["PERMISSION_DENIED", "POSITION_UNAVAILABLE", "TIMEOUT", "ERROR"]:
-            if st.button("🔄 [ Retry GPS Fix ]", key="btn_retry_gps", use_container_width=True):
-                st.session_state["gps_force_trigger"] += 1
-                st.session_state["gps_status"] = "OFF"
-                st.session_state["gps_error_msg"] = None
-                st.rerun()
-
-        # Authoritative Location Priority:
-        # effective_location = manual_override_location if manual_override_enabled else gps_detected_location
-        is_manual_override = bool(st.session_state.get("cb_manual_env_override", False))
-        selected_manual_loc = st.session_state.get("sel_manual_env_loc")
-        raw_gps_res = st.session_state.get("gps_raw_res")
-        has_raw_gps = (raw_gps_res is not None and raw_gps_res.get("nearest_landmark") is not None)
-        gps_detected_name = raw_gps_res["nearest_landmark"]["name"] if has_raw_gps else None
-
-        if is_manual_override and selected_manual_loc in SUPPORTED_LOCATIONS:
-            effective_location_name = selected_manual_loc
-            effective_source = "Manual Override"
-        elif has_raw_gps and gps_detected_name:
-            effective_location_name = gps_detected_name
-            effective_source = "Live GPS Resolved"
-        elif st.session_state.get("sel_ambig_env_loc") in SUPPORTED_LOCATIONS:
-            effective_location_name = st.session_state["sel_ambig_env_loc"]
-            effective_source = "Manual Confirmation (Ambiguous GPS)"
-        elif st.session_state.get("sel_outside_env_loc") in SUPPORTED_LOCATIONS:
-            effective_location_name = st.session_state["sel_outside_env_loc"]
-            effective_source = "Manual Selection (Outside Geofence)"
-        elif st.session_state.get("sel_manual_env_loc_fallback") in SUPPORTED_LOCATIONS:
-            effective_location_name = st.session_state["sel_manual_env_loc_fallback"]
-            effective_source = "Manual Selection (GPS Unavailable)"
-        else:
-            effective_location_name = SUPPORTED_LOCATIONS[0]
-            effective_source = "Default / Fallback"
-
-        # Calculate spatial analysis for the authoritative effective location
-        if effective_source == "Live GPS Resolved" and has_raw_gps:
-            effective_loc_res = raw_gps_res
-        else:
-            target_lm = get_landmark_by_name(effective_location_name)
-            if target_lm is not None:
-                effective_loc_res = campus_analyzer.analyze_gps(
+        if app_mode == "Presentation Demo Mode":
+            demo_lm = active_demo["landmark"]
+            if demo_lm:
+                st.caption(f"🔬 Demo Landmark: **{demo_lm}**")
+                target_lm = get_landmark_by_name(demo_lm)
+                loc_res = campus_analyzer.analyze_gps(
                     lat=float(target_lm["latitude"]),
                     lon=float(target_lm["longitude"]),
                     accuracy=5.0,
                     time_of_day_hour=calc_hour
                 )
+                loc_score_val = float(active_demo["loc_score"])
+                loc_source_desc = "Presentation Demo Fixture (Campus Survey)"
+                is_override_active = True
             else:
-                effective_loc_res = raw_gps_res
+                loc_res = None
+                loc_score_val = None
+                loc_source_desc = "GPS coordinates missing / excluded"
+                is_override_active = False
 
-        # Commit authoritative location into session state for all downstream modules
-        st.session_state["location_res"] = effective_loc_res
-        st.session_state["location_score"] = effective_loc_res["location_risk_score"] if effective_loc_res else None
-        st.session_state["effective_location_name"] = effective_location_name
-        st.session_state["location_mode"] = effective_source
+            st.session_state["location_res"] = loc_res
+            st.session_state["location_score"] = loc_score_val
+            st.session_state["effective_location_name"] = demo_lm
+            st.session_state["location_mode"] = loc_source_desc
+            st.session_state["gps_timestamp"] = time.time()
+        else:
+            # Real Data Mode Location Controls
+            loc_mode_choice = st.radio(
+                "Location Source",
+                ["📍 Campus Landmark (Manual Selection)", "📡 Live Browser Geolocation"],
+                horizontal=True,
+                key="card2_loc_mode"
+            )
 
-        loc_res = st.session_state.get("location_res")
-        has_display_loc = (loc_res is not None and loc_res.get("nearest_landmark") is not None)
+            if loc_mode_choice == "📍 Campus Landmark (Manual Selection)":
+                cur_eff = st.session_state.get("effective_location_name", SUPPORTED_LOCATIONS[0])
+                cur_idx = SUPPORTED_LOCATIONS.index(cur_eff) if cur_eff in SUPPORTED_LOCATIONS else 0
+                selected_landmark = st.selectbox(
+                    "Select BIT Mesra Campus Landmark",
+                    SUPPORTED_LOCATIONS,
+                    index=cur_idx,
+                    key="sel_card2_landmark"
+                )
+                target_lm = get_landmark_by_name(selected_landmark)
+                loc_res = campus_analyzer.analyze_gps(
+                    lat=float(target_lm["latitude"]),
+                    lon=float(target_lm["longitude"]),
+                    accuracy=5.0,
+                    time_of_day_hour=calc_hour
+                )
+                loc_score_val = loc_res["location_risk_score"]
+                loc_source_desc = "Manual Landmark Selection (User-Verified Ground Truth)"
+                is_override_active = True
 
-        if is_manual_override and selected_manual_loc:
-            st.html(f"""<div class='med-alert-warn' style='margin-bottom:8px; font-size:0.78rem; padding:6px 10px;'>
-⚙️ <strong>MANUAL OVERRIDE ACTIVE:</strong> Live GPS fix is overridden. Spatial risk evaluated for: <strong>{effective_location_name}</strong>.
-</div>""")
+                st.session_state["location_res"] = loc_res
+                st.session_state["location_score"] = loc_score_val
+                st.session_state["effective_location_name"] = selected_landmark
+                st.session_state["location_mode"] = loc_source_desc
+                st.session_state["gps_timestamp"] = time.time()
+            else:
+                # Live Browser Geolocation Component
+                if gps_sensor is not None:
+                    gps_payload = gps_sensor(
+                        key="live_gps_sensor",
+                        force_request_id=st.session_state.get("gps_force_trigger", 0),
+                        initial_status=st.session_state.get("gps_status", "OFF")
+                    )
+                else:
+                    gps_payload = None
 
-        if has_display_loc:
+                raw_gps_res = None
+                if gps_payload and isinstance(gps_payload, dict):
+                    p_status = gps_payload.get("status")
+                    if p_status == "SUCCESS" and "coords" in gps_payload:
+                        coords = gps_payload["coords"]
+                        raw_gps_res = campus_analyzer.analyze_gps(
+                            lat=float(coords["latitude"]),
+                            lon=float(coords["longitude"]),
+                            accuracy=float(coords.get("accuracy", 10.0)),
+                            timestamp=gps_payload.get("timestamp"),
+                            time_of_day_hour=calc_hour
+                        )
+                        st.session_state["gps_status"] = "CONNECTED"
+                        st.session_state["gps_raw_res"] = raw_gps_res
+                        st.session_state["location_res"] = raw_gps_res
+                        st.session_state["location_score"] = raw_gps_res["location_risk_score"]
+                        st.session_state["effective_location_name"] = raw_gps_res["nearest_landmark"]["name"]
+                        st.session_state["location_mode"] = "Live GPS Resolved"
+                        st.session_state["gps_timestamp"] = time.time()
+                        loc_res = raw_gps_res
+                        loc_score_val = raw_gps_res["location_risk_score"]
+                        loc_source_desc = "Live GPS Resolved"
+                        is_override_active = False
+                    elif p_status in ["PERMISSION_DENIED", "POSITION_UNAVAILABLE", "TIMEOUT", "ERROR", "NOT_SUPPORTED"]:
+                        st.session_state["gps_status"] = p_status
+                        st.session_state["gps_error_msg"] = gps_payload.get("message", "GPS fix failed.")
+
+                if st.session_state.get("gps_status") in ["PERMISSION_DENIED", "POSITION_UNAVAILABLE", "TIMEOUT", "ERROR"]:
+                    st.html(f"<div class='med-alert-warn' style='font-size:0.75rem; padding:6px 10px; margin-top:6px;'>⚠️ GPS unavailable: {st.session_state.get('gps_error_msg', 'Positioning denied')}. Switch to 'Campus Landmark' above to select your location.</div>")
+                    if st.button("🔄 Retry Live GPS", key="btn_retry_gps", use_container_width=True):
+                        st.session_state["gps_force_trigger"] = st.session_state.get("gps_force_trigger", 0) + 1
+                        st.session_state["gps_status"] = "OFF"
+                        st.rerun()
+
+                loc_res = st.session_state.get("location_res")
+                loc_score_val = st.session_state.get("location_score")
+                loc_source_desc = st.session_state.get("location_mode", "GPS Offline / Pending Fix")
+                is_override_active = False
+
+        if loc_res and loc_res.get("current_location") and loc_score_val is not None:
             c_loc = loc_res["current_location"]
-            n_lm = loc_res["nearest_landmark"]
-            acc_val = float(c_loc.get('accuracy_meters', 10.0))
+            n_lm = loc_res.get("nearest_landmark", {})
+            acc_val = float(c_loc.get('accuracy_meters', 5.0))
             lat_disp = f"{c_loc['latitude']:.6f}"
             lon_disp = f"{c_loc['longitude']:.6f}"
+            near_lm_name = n_lm.get("name", st.session_state.get("effective_location_name", "Main Building"))
+            dist_disp = f"{n_lm.get('distance_meters', 0.0)} m"
+            score_disp = f"{int(round(loc_score_val * 100))}%"
+            badge_cls = "score-danger" if loc_score_val > 0.65 else ("score-warn" if loc_score_val > 0.35 else "score-safe")
 
-            is_low_acc = (acc_val > 100.0) and (not is_manual_override)
-            acc_note = " (⚠️ Low Accuracy)" if is_low_acc else ""
-            acc_disp = f"±{int(acc_val)} m{acc_note}" if not is_manual_override else "Manual Target (±5m)"
-
-            if is_manual_override:
-                fix_freshness = "Manual Landmark Target"
-                near_lm_disp = f"{effective_location_name} (Manual Override)"
-            else:
-                fix_freshness = "Cached Fix (Fresh)" if st.session_state.get("location_is_cached") else "Live GPS Fix"
-                near_lm_disp = f"{n_lm['name']} (Proximity Approximate)" if is_low_acc else n_lm["name"]
-
-            dist_disp = f"{n_lm['distance_meters']} m"
-            score_disp = f"{int(round(loc_res['location_risk_score'] * 100))}%"
-            score_val = loc_res["location_risk_score"]
-        else:
-            lat_disp = "—"
-            lon_disp = "—"
-            acc_disp = "—"
-            fix_freshness = "—"
-            near_lm_disp = "—"
-            dist_disp = "—"
-            score_disp = "—"
-            score_val = 0.0
-            is_low_acc = False
-
-        st.html(f"""<div style='margin-top: 10px;'>
+            st.html(f"""<div style='margin-top: 10px;'>
+  <div class='med-metric-row'><span class='med-metric-label'>Source</span> <span class='med-metric-value' style='font-size:0.76rem;'>{loc_source_desc}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Latitude</span> <span class='med-metric-value'>{lat_disp}</span></div>
   <div class='med-metric-row'><span class='med-metric-label'>Longitude</span> <span class='med-metric-value'>{lon_disp}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Accuracy</span> <span class='med-metric-value'>{acc_disp}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Fix Freshness</span> <span class='med-metric-value'>{fix_freshness}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Nearest Landmark</span> <span class='med-metric-value med-metric-value-accent'>{near_lm_disp}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Distance</span> <span class='med-metric-value'>{dist_disp}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Accuracy</span> <span class='med-metric-value'>±{int(acc_val)} m</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Campus Landmark</span> <span class='med-metric-value med-metric-value-accent'>{near_lm_name}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Distance to Landmark</span> <span class='med-metric-value'>{dist_disp}</span></div>
 </div>""")
 
-        if has_display_loc and is_low_acc:
-            st.html(f"""<div class='med-alert-warn'>
-⚠️ Reported accuracy is ±{int(acc_val)}m. The nearest campus landmark is approximate and subject to GPS drift.
-</div>""")
-
-        if st.session_state.get("gps_error_msg"):
-            st.html(f"""<div class='med-alert-error'>
-⚠️ {st.session_state["gps_error_msg"]}
-</div>""")
-
-        badge_cls = "score-danger" if score_val > 0.65 else ("score-warn" if score_val > 0.35 else "score-safe")
-        st.html(f"""<div class="med-score-box">
-  <div class="med-score-label">Location Vulnerability Score</div>
+            st.html(f"""<div class="med-score-box">
+  <div class="med-score-label">Location Context Vulnerability Score</div>
   <div class="med-score-badge {badge_cls}">{score_disp}</div>
 </div>""")
+        else:
+            st.html("""<div style='margin-top: 14px;'>
+  <div class='med-alert-warn' style='font-size:0.8rem;'>
+    ⚠️ <b>LOCATION STREAM EXCLUDED:</b> Coordinates not acquired. Select a campus landmark above to activate location assessment.
+  </div>
+</div>
+<div class="med-score-box">
+  <div class="med-score-label">Location Context Vulnerability Score</div>
+  <div class="med-score-badge score-warn">UNKNOWN / EXCLUDED</div>
+</div>""")
 
-    # CARD 3 — ENVIRONMENTAL CONTEXT (AUTOMATIC AI PREDICTION)
+    # CARD 3 — ENVIRONMENTAL CONTEXT (OPEN-METEO + SCHEDULE)
     with col3:
         st.html("""<div class="med-card-header">
   <div>
     <span class="med-card-title">3. Environmental Context</span>
-    <span class="med-card-subtitle">AI-Based Situational Prediction</span>
+    <span class="med-card-subtitle">Open-Meteo & Campus Models</span>
   </div>
-  <span class="med-provenance-pill pill-ml">⚡ Synthetic-Trained ML Prediction Engine</span>
+  <span class="med-provenance-pill pill-ml">⚡ Live API + Context Engine</span>
 </div>""")
 
-        # 1. Automatic Time and Day Detection (Asia/Kolkata)
-        try:
-            if hasattr(predictor, "get_current_ist_time"):
-                ist_time_info = predictor.get_current_ist_time()
-            elif hasattr(predictor, "env_engine") and predictor.env_engine is not None and hasattr(predictor.env_engine, "get_current_ist_time"):
-                ist_time_info = predictor.env_engine.get_current_ist_time()
+        curr_eff_loc = st.session_state.get("effective_location_name") or SUPPORTED_LOCATIONS[0]
+
+        if app_mode == "Presentation Demo Mode":
+            demo_env = active_demo["env_score"]
+            if demo_env is not None:
+                st.caption(f"🔬 Demo Environment Context: **{active_demo['weather_desc']}**")
+                env_score_disp = float(demo_env)
+                w_desc = active_demo["weather_desc"]
+                crowd_disp = active_demo["crowd_cat"]
+                light_disp = active_demo["light_cat"]
+                env_pred = {
+                    "status": "SUCCESS",
+                    "environmental_context_score": env_score_disp,
+                    "calibrated_environmental_score": env_score_disp,
+                    "weather_reading": {"status": "LIVE", "weather_desc": w_desc, "temperature_c": 14.2, "relative_humidity_pct": 80.0},
+                    "crowd_prediction": {"category": crowd_disp, "confidence_pct": 85.0, "model_name": "Schedule Model"},
+                    "lighting_prediction": {"category": light_disp, "confidence_pct": 90.0, "model_name": "Diurnal Astronomical Model"}
+                }
             else:
-                ist_time_info = config.get_current_ist_time()
-        except Exception:
-            ist_time_info = config.get_current_ist_time()
+                env_score_disp = None
+                env_pred = {"status": "OFFLINE", "environmental_context_score": None}
+                w_desc = "Excluded / Offline"
+                crowd_disp = "Unavailable"
+                light_disp = "Unavailable"
 
-        curr_time_disp = ist_time_info.get("time_str", "12:00 PM IST")
-        curr_day_disp = ist_time_info.get("day_of_week", "Monday")
-        is_wknd = ist_time_info.get("is_weekend", 0)
-        hour_val = ist_time_info.get("hour_float", 12.0)
-        wknd_tag = "Weekend" if is_wknd else "Weekday"
-
-        # 2. Location Resolution (GPS vs Ambiguity vs Manual Fallback)
-        raw_gps_res = st.session_state.get("gps_raw_res")
-        has_raw_gps = (raw_gps_res is not None and raw_gps_res.get("nearest_landmark") is not None)
-        raw_gps_name = raw_gps_res["nearest_landmark"]["name"] if has_raw_gps else None
-
-        gps_resolve_info = None
-        if has_raw_gps and raw_gps_res.get("current_location") is not None:
-            c_loc = raw_gps_res["current_location"]
-            r_lat = c_loc.get("latitude")
-            r_lon = c_loc.get("longitude")
-            r_acc = c_loc.get("accuracy_meters")
-
-            # Defensively delegate to predictor or env_engine
-            resolver = getattr(predictor, "resolve_campus_location", None)
-            if resolver is None and hasattr(predictor, "env_engine") and predictor.env_engine is not None:
-                resolver = getattr(predictor.env_engine, "resolve_campus_location", None)
-
-            if resolver is not None:
-                try:
-                    gps_resolve_info = resolver(
-                        lat=r_lat,
-                        lon=r_lon,
-                        accuracy=r_acc,
-                        max_geofence_meters=350.0
-                    )
-                except TypeError:
-                    try:
-                        # Fallback for older signatures without accuracy keyword
-                        gps_resolve_info = resolver(
-                            lat=r_lat,
-                            lon=r_lon,
-                            max_geofence_meters=350.0
-                        )
-                    except Exception as err:
-                        print(f"[app/main.py] Warning: Campus location resolution fallback failed: {err}", flush=True)
-                        gps_resolve_info = None
-                except Exception as err:
-                    print(f"[app/main.py] Warning: Campus location resolution failed: {err}", flush=True)
-                    gps_resolve_info = None
-
-        is_ambiguous = (gps_resolve_info is not None and gps_resolve_info.get("status") == "AMBIGUOUS_LOCATION")
-        is_outside_geofence = (gps_resolve_info is not None and gps_resolve_info.get("status") == "OUTSIDE_CAMPUS_GEOFENCE")
-
-        if is_ambiguous:
-            cands = gps_resolve_info.get("ambiguous_candidates", [])
-            cand_str = ", ".join(cands)
-            st.html(f"""<div class='med-alert-warn' style='font-size:0.78rem; margin-bottom:8px;'>
-⚠️ <strong>AMBIGUOUS GPS LOCATION DETECTED:</strong> Position is within accuracy margin between: <em>{cand_str}</em>. Please manually confirm your campus location below.
-</div>""")
-            default_cand = cands[0] if cands and cands[0] in SUPPORTED_LOCATIONS else SUPPORTED_LOCATIONS[0]
-            default_idx = SUPPORTED_LOCATIONS.index(default_cand)
-            active_env_location = st.selectbox("Confirm Campus Landmark (Ambiguous GPS)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_ambig_env_loc")
-            loc_origin = "Manual Confirmation (Ambiguous GPS)"
-
-        elif is_outside_geofence:
-            dist_m = gps_resolve_info.get("distance_meters", "—")
-            st.html(f"""<div class='med-alert-warn' style='font-size:0.78rem; margin-bottom:8px;'>
-⚠️ <strong>OUTSIDE CAMPUS GEOFENCE:</strong> Position is {dist_m}m away, exceeding 350m campus boundary. Please manually select a campus location below.
-</div>""")
-            active_env_location = st.selectbox("Campus Landmark (Manual Fallback)", SUPPORTED_LOCATIONS, index=0, key="sel_outside_env_loc")
-            loc_origin = "Manual Selection (Outside Geofence)"
-
-        elif has_raw_gps and gps_resolve_info is not None and gps_resolve_info.get("status") == "RESOLVED_GPS":
-            resolved_gps_loc = gps_resolve_info.get("resolved_location") or raw_gps_name
-            use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=is_manual_override, key="cb_manual_env_override")
-            if use_manual_loc:
-                default_sel = selected_manual_loc if (selected_manual_loc in SUPPORTED_LOCATIONS) else resolved_gps_loc
-                default_idx = SUPPORTED_LOCATIONS.index(default_sel) if default_sel in SUPPORTED_LOCATIONS else 0
-                active_env_location = st.selectbox("Campus Landmark (Manual Override)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_manual_env_loc")
-                loc_origin = "Manual Selection (Override)"
-            else:
-                active_env_location = resolved_gps_loc
-                loc_origin = "Live GPS Resolved"
-        elif has_raw_gps:
-            use_manual_loc = st.checkbox("⚙️ Override GPS Location", value=is_manual_override, key="cb_manual_env_override")
-            if use_manual_loc:
-                default_sel = selected_manual_loc if (selected_manual_loc in SUPPORTED_LOCATIONS) else raw_gps_name
-                default_idx = SUPPORTED_LOCATIONS.index(default_sel) if default_sel in SUPPORTED_LOCATIONS else 0
-                active_env_location = st.selectbox("Campus Landmark (Manual Override)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_manual_env_loc")
-                loc_origin = "Manual Selection (Override)"
-            else:
-                active_env_location = raw_gps_name
-                loc_origin = "Live GPS Resolved"
+            st.session_state["env_res"] = env_pred
+            st.session_state["env_score"] = env_score_disp
+            st.session_state["env_timestamp"] = time.time()
         else:
-            st.caption("📍 GPS unavailable or manual mode. Select campus location:")
-            default_sel = selected_manual_loc if (selected_manual_loc in SUPPORTED_LOCATIONS) else SUPPORTED_LOCATIONS[0]
-            default_idx = SUPPORTED_LOCATIONS.index(default_sel) if default_sel in SUPPORTED_LOCATIONS else 0
-            active_env_location = st.selectbox("Campus Landmark (Manual Fallback)", SUPPORTED_LOCATIONS, index=default_idx, key="sel_manual_env_loc_fallback")
-            loc_origin = "Manual Selection (GPS Unavailable)"
-
-        # Immediately synchronize authoritative location state if widget selection changed
-        if active_env_location != effective_location_name or loc_origin != effective_source:
-            effective_location_name = active_env_location
-            effective_source = loc_origin
-            target_lm = get_landmark_by_name(effective_location_name)
-            if target_lm is not None:
-                effective_loc_res = campus_analyzer.analyze_gps(
-                    lat=float(target_lm["latitude"]),
-                    lon=float(target_lm["longitude"]),
-                    accuracy=5.0,
-                    time_of_day_hour=calc_hour
-                )
-                st.session_state["location_res"] = effective_loc_res
-                st.session_state["location_score"] = effective_loc_res["location_risk_score"]
-                st.session_state["effective_location_name"] = effective_location_name
-                st.session_state["location_mode"] = effective_source
-
-        # 3. Automatic AI Environmental Inference
-        try:
-            env_pred = predictor.predict_environment_context(
-                location=active_env_location,
-                hour=hour_val,
-                day_of_week=curr_day_disp,
-                is_weekend=is_wknd
-            )
-        except Exception as e:
-            env_pred = {
-                "status": "UNAVAILABLE",
-                "error": str(e),
-                "message": f"Environmental inference pipeline error: {str(e)}",
-                "crowd_prediction": {"category": "UNKNOWN", "confidence_pct": 0.0, "model_name": "Unavailable"},
-                "lighting_prediction": {"category": "UNKNOWN", "confidence_pct": 0.0, "model_name": "Unavailable", "lux_estimate": None},
-                "environmental_context_score": None,
-                "calibrated_environmental_score": None
-            }
-
-        # Store env_res and timestamp
-        st.session_state["env_res"] = env_pred
-        st.session_state["env_timestamp"] = time.time()
-
-        # Defensive environmental score extraction and validation
-        env_score_candidate = env_pred.get("environmental_context_score")
-        if env_score_candidate is None:
-            env_score_candidate = env_pred.get("calibrated_environmental_score")
-        if env_score_candidate is None:
-            env_score_candidate = env_pred.get("environment_risk_score")
-
-        is_valid_env_score = (
-            env_score_candidate is not None
-            and isinstance(env_score_candidate, (int, float))
-            and np.isfinite(env_score_candidate)
-            and 0.0 <= float(env_score_candidate) <= 1.0
-        )
-        is_success = (env_pred.get("status") == "SUCCESS") and is_valid_env_score
-
-        if is_success:
-            st.session_state["env_score"] = float(env_score_candidate)
-
-            crowd_res = env_pred.get("crowd_prediction", {})
-            light_res = env_pred.get("lighting_prediction", {})
-            crowd_cat = crowd_res.get("category", "—")
-            crowd_conf = crowd_res.get("confidence_pct", 0.0)
-            crowd_model = crowd_res.get("model_name", "Active ML")
-
-            light_cat = light_res.get("category", "—")
-            light_conf = light_res.get("confidence_pct", 0.0)
-            light_model = light_res.get("model_name", "Active ML")
-            lux_val = light_res.get("lux_estimate", "—")
-
-            st.html(f"""<div style='margin-top: 6px;'>
-  <div class='med-metric-row'><span class='med-metric-label'>Location</span> <span class='med-metric-value med-metric-value-accent'>{active_env_location}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Location Mode</span> <span class='med-metric-value' style='font-size:0.8rem;'>{loc_origin}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Time (Asia/Kolkata)</span> <span class='med-metric-value'>{curr_time_disp}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Day of Week</span> <span class='med-metric-value'>{curr_day_disp} ({wknd_tag})</span></div>
-</div>
-
-<div style='display:flex; gap:8px; margin-top:10px;'>
-  <div style='flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px;'>
-    <div style='font-size:0.75rem; color:#888;'>Crowd Density</div>
-    <div style='font-size:1.05rem; font-weight:700; color:#fff;'>{crowd_cat} <span style='font-size:0.75rem; color:#aaa;'>({crowd_conf}%)</span></div>
-    <div style='font-size:0.68rem; color:#00bcd4; margin-top:2px;'>{crowd_model}</div>
-  </div>
-  <div style='flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px;'>
-    <div style='font-size:0.75rem; color:#888;'>Lighting Condition</div>
-    <div style='font-size:1.05rem; font-weight:700; color:#fff;'>{light_cat} <span style='font-size:0.75rem; color:#aaa;'>({light_conf}%)</span></div>
-    <div style='font-size:0.68rem; color:#00bcd4; margin-top:2px;'>{light_model} · ~{lux_val} lx</div>
-  </div>
-</div>
-
-<div class='med-alert-warn' style='font-size:0.75rem; margin-top:8px; padding:6px 10px; line-height:1.3;'>
-  ⚠️ <strong>SYNTHETIC-DATA TRAINED MODEL — EXPERIMENTAL PREDICTION</strong><br>
-  <strong>NOT LIVE SENSOR MEASUREMENT.</strong> Actual campus crowd and lighting conditions may differ from predictions.
-</div>""")
-        else:
-            st.session_state["env_score"] = None
-            crowd_res = env_pred.get("crowd_prediction", {})
-            light_res = env_pred.get("lighting_prediction", {})
-            crowd_cat = crowd_res.get("category", "UNKNOWN")
-            crowd_conf = crowd_res.get("confidence_pct", 0.0)
-            light_cat = light_res.get("category", "UNKNOWN")
-            light_conf = light_res.get("confidence_pct", 0.0)
-
-            # Defensive failure reason extraction: NEVER show success disclaimer as an error
-            raw_err = env_pred.get("message") or env_pred.get("error")
-            raw_warn = env_pred.get("warning")
-            if raw_err:
-                warn_msg = str(raw_err)
-            elif raw_warn and not str(raw_warn).startswith("EXPERIMENTAL PREDICTION"):
-                warn_msg = str(raw_warn)
-            else:
-                warn_msg = "Environmental models unavailable or unsupported campus location."
-
-            st.html(f"""<div style='margin-top: 6px;'>
-  <div class='med-metric-row'><span class='med-metric-label'>Location</span> <span class='med-metric-value med-metric-value-accent'>{active_env_location}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Location Mode</span> <span class='med-metric-value' style='font-size:0.8rem;'>{loc_origin}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Time (Asia/Kolkata)</span> <span class='med-metric-value'>{curr_time_disp}</span></div>
-  <div class='med-metric-row'><span class='med-metric-label'>Day of Week</span> <span class='med-metric-value'>{curr_day_disp} ({wknd_tag})</span></div>
-</div>
-
-<div style='display:flex; gap:8px; margin-top:10px;'>
-  <div style='flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px;'>
-    <div style='font-size:0.75rem; color:#888;'>Crowd Density</div>
-    <div style='font-size:1.05rem; font-weight:700; color:#aaa;'>{crowd_cat} <span style='font-size:0.75rem; color:#888;'>({crowd_conf:.1f}%)</span></div>
-    <div style='font-size:0.68rem; color:#ff9800; margin-top:2px;'>Unavailable</div>
-  </div>
-  <div style='flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px;'>
-    <div style='font-size:0.75rem; color:#888;'>Lighting Condition</div>
-    <div style='font-size:1.05rem; font-weight:700; color:#aaa;'>{light_cat} <span style='font-size:0.75rem; color:#888;'>({light_conf:.1f}%)</span></div>
-    <div style='font-size:0.68rem; color:#ff9800; margin-top:2px;'>Unavailable</div>
-  </div>
-</div>
-
-<div class='med-alert-warn' style='font-size:0.75rem; margin-top:8px; padding:6px 10px; line-height:1.3;'>
-  ⚠️ <strong>CONTEXT STATUS UNKNOWN:</strong> {warn_msg}<br>
-  No neutral values are silently substituted. Complete 3-branch index is unavailable. The engine evaluates a Partial Dual-Branch Context Index (Physiological + Spatial only).
-</div>""")
-
-        # Auto-update threat fusion if previously analyzed
-        if st.session_state.get("analyzed_threat") is not None:
-            loc_score_val = st.session_state.get("location_score")
+            ist_info = config.get_current_ist_time()
             try:
-                st.session_state["analyzed_threat"] = predictor.predict_fusion(
-                    physiological_stress_score=st.session_state["physio_score"],
-                    location_risk_score=loc_score_val,
-                    environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50,
-                    physio_telemetry=st.session_state.get("physio_telemetry"),
-                    spatial_analysis=st.session_state.get("location_res"),
-                    environmental_res=st.session_state.get("env_res"),
-                    physio_age_sec=max(0.0, time.time() - st.session_state.get("physio_timestamp", time.time())),
-                    spatial_age_sec=max(0.0, time.time() - st.session_state.get("gps_timestamp", time.time())),
-                    env_age_sec=max(0.0, time.time() - st.session_state.get("env_timestamp", time.time())),
-                    is_manual_override=bool(st.session_state.get("cb_manual_env_override") or st.session_state.get("location_override_active"))
+                env_pred = predictor.predict_environment_context(
+                    location=curr_eff_loc,
+                    hour=ist_info["hour_float"],
+                    day_of_week=ist_info["day_of_week"],
+                    is_weekend=ist_info["is_weekend"]
                 )
             except Exception as e:
-                print(f"[app/main.py] Warning: Auto-update fusion failed: {e}", flush=True)
+                env_pred = {"status": "ERROR", "error": str(e), "environmental_context_score": None}
 
-        if st.session_state["env_score"] is not None:
-            env_pct = int(round(st.session_state["env_score"] * 100))
-            env_badge_cls = "score-danger" if env_pct > 65 else ("score-warn" if env_pct > 35 else "score-safe")
-            score_inner = f"<div class='med-score-badge {env_badge_cls}'>{env_pct}%</div>"
-            score_lbl = "Environment Vulnerability Score"
+            st.session_state["env_res"] = env_pred
+            st.session_state["env_timestamp"] = time.time()
+            env_score_disp = env_pred.get("environmental_context_score")
+            st.session_state["env_score"] = float(env_score_disp) if (env_score_disp is not None and np.isfinite(env_score_disp)) else None
+
+            # Extract Open-Meteo Weather reading
+            w_block = env_pred.get("weather_reading") or {}
+            w_status = w_block.get("status", "UNAVAILABLE")
+            if w_status == "LIVE":
+                w_desc = f"{w_block.get('weather_desc', 'Clear sky')} ({w_block.get('temperature_c', 14.0)}°C, {w_block.get('relative_humidity_pct', 80)}% RH)"
+            else:
+                w_desc = "Open-Meteo Offline (Diurnal context active)"
+
+            crowd_res = env_pred.get("crowd_prediction") or {}
+            light_res = env_pred.get("lighting_prediction") or {}
+            crowd_disp = f"{crowd_res.get('category', 'Medium')} ({crowd_res.get('confidence_pct', 60.0):.0f}%)"
+            light_disp = f"{light_res.get('category', 'Good')} (~{light_res.get('lux_estimate', 250)} lx)"
+
+        if env_score_disp is not None:
+            env_val = float(env_score_disp)
+            env_pct_str = f"{int(round(env_val * 100))}%"
+            badge_cls = "score-danger" if env_val > 0.65 else ("score-warn" if env_val > 0.35 else "score-safe")
+
+            st.html(f"""<div style='margin-top: 10px;'>
+  <div class='med-metric-row'><span class='med-metric-label'>Live Weather (Open-Meteo)</span> <span class='med-metric-value' style='color:#38bdf8; font-weight:700;'>{w_desc}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Campus Location</span> <span class='med-metric-value med-metric-value-accent'>{curr_eff_loc}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Crowd Context</span> <span class='med-metric-value'>{crowd_disp}</span></div>
+  <div class='med-metric-row'><span class='med-metric-label'>Lighting Context</span> <span class='med-metric-value'>{light_disp}</span></div>
+</div>
+
+<div class='med-alert-warn' style='font-size:0.73rem; margin-top:8px; padding:6px 10px; line-height:1.3;'>
+  ℹ️ <b>METEOROLOGICAL &amp; CAMPUS CONTEXT:</b> Real Open-Meteo weather integrated (23.4123°N, 85.4399°E). Crowd &amp; lighting reflect diurnal schedule context. Physical IoT photometer/acoustic hardware is awaiting deployment.
+</div>""")
+
+            st.html(f"""<div class="med-score-box">
+  <div class="med-score-label">Environmental Context Vulnerability Score</div>
+  <div class="med-score-badge {badge_cls}">{env_pct_str}</div>
+</div>""")
         else:
-            score_inner = "<div class='med-score-badge score-warn' style='font-size:0.85rem;'>UNKNOWN</div>"
-            score_lbl = "Environment Vulnerability Score (Unavailable)"
-
-        st.html(f"""<div class="med-score-box">
-  <div class="med-score-label">{score_lbl}</div>
-  {score_inner}
+            st.html("""<div style='margin-top: 14px;'>
+  <div class='med-alert-warn' style='font-size:0.8rem;'>
+    ⚠️ <b>ENVIRONMENTAL STREAM EXCLUDED:</b> Meteorological API or environmental context engine offline. Modality is omitted without silent substitution.
+  </div>
+</div>
+<div class="med-score-box">
+  <div class="med-score-label">Environmental Context Vulnerability Score</div>
+  <div class="med-score-badge score-warn">UNKNOWN / EXCLUDED</div>
 </div>""")
 
     # -------------------------------------------------------------------------
-    # LOCATION PIPELINE DIAGNOSTICS & AUDIT CONTAINER
+    # MULTIMODAL PIPELINE AUDIT & EVALUATION TRIGGER
     # -------------------------------------------------------------------------
-    raw_gps_res_data = st.session_state.get("gps_raw_res")
-    has_raw_gps_data = (raw_gps_res_data is not None and raw_gps_res_data.get("nearest_landmark") is not None)
-    if has_raw_gps_data:
-        raw_lm_name = raw_gps_res_data["nearest_landmark"]["name"]
-        raw_c = raw_gps_res_data.get("current_location", {})
-        raw_gps_disp = f"{raw_lm_name} ({raw_c.get('latitude', 0.0):.5f}, {raw_c.get('longitude', 0.0):.5f})"
-    else:
-        raw_gps_disp = "No Active GPS Fix"
-
-    is_override_active = bool(st.session_state.get("cb_manual_env_override", False))
-    override_status_badge = "<span style='color:#ff9800; font-weight:700;'>ENABLED (Manual Override Active)</span>" if is_override_active else "<span style='color:#4caf50; font-weight:700;'>DISABLED (Live GPS Priority)</span>"
-    sel_manual_disp = st.session_state.get("sel_manual_env_loc") if (is_override_active and st.session_state.get("sel_manual_env_loc")) else "None (GPS Default)"
-    eff_loc_disp = st.session_state.get("effective_location_name") or "—"
-
-    cur_loc_res = st.session_state.get("location_res")
-    if cur_loc_res and cur_loc_res.get("current_location"):
-        eff_c = cur_loc_res["current_location"]
-        eff_coords_disp = f"{eff_c.get('latitude', 0.0):.5f}, {eff_c.get('longitude', 0.0):.5f}"
-    else:
-        eff_coords_disp = "—"
-
-    eff_spatial_score_disp = f"{int(round(st.session_state['location_score'] * 100))}%" if st.session_state.get("location_score") is not None else "Unavailable"
-    eff_env_score_disp = f"{int(round(st.session_state['env_score'] * 100))}%" if st.session_state.get("env_score") is not None else "Unavailable"
-    auth_source_disp = st.session_state.get("location_mode", "—")
-
-    st.html(f"""<div style='background:rgba(18, 24, 38, 0.75); border:1px solid rgba(0, 188, 212, 0.25); border-radius:8px; padding:10px 14px; margin:14px 0;'>
-  <div style='font-size:0.78rem; font-weight:700; color:#00bcd4; letter-spacing:0.5px; margin-bottom:8px; display:flex; justify-content:space-between; flex-wrap:wrap;'>
-    <span>📍 LOCATION RESOLUTION & MULTIMODAL PIPELINE AUDIT</span>
-    <span style='font-weight:400; color:#888;'>Authoritative Source: <strong style='color:#64b5f6;'>{auth_source_disp}</strong></span>
-  </div>
-  <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:6px 16px; font-size:0.76rem;'>
-    <div><span style='color:#888;'>GPS Hardware Location:</span> <strong style='color:#e0e0e0;'>{raw_gps_disp}</strong></div>
-    <div><span style='color:#888;'>Manual Override:</span> {override_status_badge}</div>
-    <div><span style='color:#888;'>Selected Manual Landmark:</span> <strong style='color:#e0e0e0;'>{sel_manual_disp}</strong></div>
-    <div><span style='color:#888;'>Effective Analysis Landmark:</span> <strong style='color:#00bcd4;'>{eff_loc_disp}</strong></div>
-    <div><span style='color:#888;'>Effective Landmark Coords:</span> <strong style='color:#e0e0e0;'>{eff_coords_disp}</strong></div>
-    <div><span style='color:#888;'>Spatial Risk Score (L):</span> <strong style='color:#ffb74d;'>{eff_spatial_score_disp}</strong></div>
-    <div><span style='color:#888;'>Environmental Risk Score (E):</span> <strong style='color:#81c784;'>{eff_env_score_disp}</strong></div>
-    <div><span style='color:#888;'>Active Authority:</span> <strong style='color:#64b5f6;'>{auth_source_disp}</strong></div>
-  </div>
-</div>""")
-
     st.html("<br>")
-
     col_center = st.columns([1, 2, 1])[1]
     with col_center:
-        if st.button("🛡️ EVALUATE OVERALL CONTEXT RISK", key="btn_main_threat", use_container_width=True):
-            loc_score_val = st.session_state.get("location_score")
-            try:
-                res = predictor.predict_fusion(
-                    physiological_stress_score=st.session_state["physio_score"],
-                    location_risk_score=loc_score_val,
-                    environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50,
-                    physio_telemetry=st.session_state.get("physio_telemetry"),
-                    spatial_analysis=st.session_state.get("location_res"),
-                    environmental_res=st.session_state.get("env_res"),
-                    physio_age_sec=max(0.0, time.time() - st.session_state.get("physio_timestamp", time.time())),
-                    spatial_age_sec=max(0.0, time.time() - st.session_state.get("gps_timestamp", time.time())),
-                    env_age_sec=max(0.0, time.time() - st.session_state.get("env_timestamp", time.time())),
-                    is_manual_override=bool(st.session_state.get("cb_manual_env_override") or st.session_state.get("location_override_active"))
-                )
-                st.session_state["analyzed_threat"] = res
-            except Exception as e:
-                st.error(f"Fusion Model Evaluation Error: {e}")
+        evaluate_clicked = st.button("🛡️ EVALUATE OVERALL CONTEXT RISK", key="btn_main_threat", use_container_width=True)
 
-    # SECTION 4: OVERALL RISK ASSESSMENT PANEL
+    # Automatic evaluation on initial run or presentation mode change
+    if evaluate_clicked or (st.session_state.get("analyzed_threat") is None):
+        try:
+            cur_p = st.session_state.get("physio_score")
+            cur_l = st.session_state.get("location_score")
+            cur_e = st.session_state.get("env_score")
+            res = predictor.predict_fusion(
+                physiological_stress_score=cur_p,
+                location_risk_score=cur_l,
+                environment_risk_score=cur_e,
+                threshold=0.50,
+                physio_telemetry=st.session_state.get("physio_telemetry"),
+                spatial_analysis=st.session_state.get("location_res"),
+                environmental_res=st.session_state.get("env_res"),
+                physio_age_sec=0.0 if app_mode == "Presentation Demo Mode" else max(0.0, time.time() - st.session_state.get("physio_timestamp", time.time())),
+                spatial_age_sec=0.0 if app_mode == "Presentation Demo Mode" else max(0.0, time.time() - st.session_state.get("gps_timestamp", time.time())),
+                env_age_sec=0.0 if app_mode == "Presentation Demo Mode" else max(0.0, time.time() - st.session_state.get("env_timestamp", time.time())),
+                is_manual_override=bool(st.session_state.get("cb_manual_env_override") or st.session_state.get("card2_loc_mode") == "📍 Campus Landmark (Manual Selection)" or app_mode == "Presentation Demo Mode")
+            )
+            st.session_state["analyzed_threat"] = res
+        except Exception as e:
+            st.error(f"Multimodal Fusion Evaluation Error: {e}")
+
+    # SECTION 4: OVERALL RISK ASSESSMENT PANEL & PRESENTATION DIAGNOSTICS
     if st.session_state.get("analyzed_threat") is not None:
         try:
             render_overall_risk_panel(st.session_state["analyzed_threat"])
+            render_diagnostics_panel(st.session_state["analyzed_threat"], app_mode)
         except Exception as e:
             st.error(f"Error rendering overall context assessment: {e}")
 
