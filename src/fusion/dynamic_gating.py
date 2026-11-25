@@ -116,6 +116,7 @@ class DynamicGatingNetwork:
         if not self.is_trained:
             return {
                 "status": "UNTRAINED_FALLBACK",
+                "learned_gating_status": "LEARNED GATING: NOT TRAINED",
                 "is_trained": False,
                 "is_simulation_only": False,
                 "dynamic_weights": {
@@ -130,6 +131,7 @@ class DynamicGatingNetwork:
 
         return {
             "status": "TRAINED_DYNAMIC",
+            "learned_gating_status": "LEARNED GATING: TRAINED",
             "is_trained": True,
             "is_simulation_only": self.is_simulation_only,
             "dynamic_weights": {k: round(v, 4) for k, v in weights_dict.items()},

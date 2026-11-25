@@ -35,6 +35,12 @@ from src.fusion.meta_learner import (
 )
 from src.fusion.calibration import ProbabilityCalibrator
 from src.fusion.fusion_engine import DynamicMultimodalFusionEngine
+from src.fusion.adaptive_fusion import (
+    ReliabilityAwareAdaptiveFusionEngine,
+    ModalityReliabilityMetrics,
+    BASELINE_PRIORS,
+    FRESHNESS_TAUS_SEC
+)
 
 __all__ = [
     "FusionMode",
@@ -59,5 +65,9 @@ __all__ = [
     "WeightedLateFusionBaseline",
     "MultiOutputMetaLearner",
     "ProbabilityCalibrator",
-    "DynamicMultimodalFusionEngine"
+    "DynamicMultimodalFusionEngine",
+    "ReliabilityAwareAdaptiveFusionEngine",
+    "ModalityReliabilityMetrics",
+    "BASELINE_PRIORS",
+    "FRESHNESS_TAUS_SEC"
 ]

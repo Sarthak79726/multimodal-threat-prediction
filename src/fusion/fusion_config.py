@@ -9,6 +9,7 @@ from typing import Dict, Any, List
 
 class FusionMode(str, Enum):
     """Supported multimodal fusion paradigms."""
+    RELIABILITY_AWARE = "RELIABILITY_AWARE"   # Reliability-Aware Adaptive Fusion (q_i = v_i * f_i * s_i, alpha_i = u_i / sum(u_j))
     STATIC_WEIGHTED = "STATIC_WEIGHTED"       # Operational Baseline: Fixed weights (0.40P + 0.25L + 0.35E)
     DYNAMIC_GATING = "DYNAMIC_GATING"         # Learned Dynamic Gating Network: alpha = Softmax(g(X))
     META_LEARNER = "META_LEARNER"             # Level 1 Stacking Meta-Learner (Logistic Regression / XGBoost)

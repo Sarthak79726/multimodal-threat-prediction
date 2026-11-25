@@ -36,8 +36,13 @@ from src.location.model import SpatialRiskEngine
 from src.environment.model import EnvironmentalContextEngine
 from src.fusion.meta_learner import WeightedLateFusionBaseline
 from src.fusion.stacking_pipeline import StackingEnsemblePipeline, IneligibleProductionArtifactError
-from src.fusion.fusion_config import FusionMode, MissingModalityStrategy
+from src.fusion.fusion_config import FusionMode, MissingModalityStrategy, DEFAULT_BASELINE_WEIGHTS
 from src.fusion.fusion_engine import DynamicMultimodalFusionEngine
+from src.fusion.adaptive_fusion import (
+    ReliabilityAwareAdaptiveFusionEngine,
+    BASELINE_PRIORS,
+    FRESHNESS_TAUS_SEC
+)
 
 class MultimodalThreatPredictor:
     """
@@ -79,9 +84,12 @@ class MultimodalThreatPredictor:
 
         # 4. Unified Dynamic Multimodal Fusion Engine
         self.dynamic_fusion_engine = DynamicMultimodalFusionEngine(
-            default_mode=FusionMode.STATIC_WEIGHTED,
+            default_mode=FusionMode.RELIABILITY_AWARE,
             missing_strategy=MissingModalityStrategy.MARGINALIZED_EXCLUSION,
             threshold=config.DEFAULT_DECISION_THRESHOLD
+        )
+        self.adaptive_fusion_engine = ReliabilityAwareAdaptiveFusionEngine(
+            baseline_priors=DEFAULT_BASELINE_WEIGHTS
         )
 
     def predict_physiological(self, input_dict: Dict[str, float]) -> float:
@@ -321,30 +329,11 @@ class MultimodalThreatPredictor:
             and 0.0 <= float(environment_risk_score) <= 1.0
         )
 
-        # Resolve requested fusion mode
-        resolved_mode = None
-        if fusion_mode:
-            try:
-                resolved_mode = FusionMode(fusion_mode)
-            except Exception:
-                resolved_mode = FusionMode.STATIC_WEIGHTED
-
-        # Execute unified dynamic multimodal fusion evaluation
-        dynamic_eval = self.dynamic_fusion_engine.evaluate_fusion(
-            p_stress=phys_norm,
-            l_risk=loc_norm,
-            e_risk=environment_risk_score if is_env_available else None,
-            physio_telemetry=physio_telemetry,
-            spatial_analysis=spatial_analysis,
-            environmental_res=environmental_res,
-            is_manual_override=is_manual_override,
-            mode=resolved_mode
-        )
-
-        logger.info(
-            "predict_fusion: P=%.4f, L=%.4f, E=%s -> mode=%s",
-            phys_norm, loc_norm, environment_risk_score,
-            "THREE_BRANCH_FUSION" if is_env_available else "PARTIAL_DUAL_BRANCH"
+        # Defensive check for all-missing / all-invalid modalities
+        all_modalities_missing = (
+            (physiological_stress_score is None or not np.isfinite(physiological_stress_score))
+            and (location_risk_score is None or not np.isfinite(location_risk_score))
+            and not is_env_available
         )
 
         modalities_metadata = {
@@ -358,39 +347,137 @@ class MultimodalThreatPredictor:
             }
         }
 
+        # Resolve requested fusion mode
+        resolved_mode = None
+        if fusion_mode:
+            try:
+                resolved_mode = FusionMode(fusion_mode)
+            except Exception:
+                resolved_mode = FusionMode.RELIABILITY_AWARE
+        else:
+            resolved_mode = FusionMode.RELIABILITY_AWARE
+
+        # Execute unified dynamic multimodal fusion evaluation for candidate categories & governance
+        dynamic_eval = self.dynamic_fusion_engine.evaluate_fusion(
+            p_stress=phys_norm,
+            l_risk=loc_norm,
+            e_risk=environment_risk_score if is_env_available else None,
+            physio_telemetry=physio_telemetry,
+            spatial_analysis=spatial_analysis,
+            environmental_res=environmental_res,
+            physio_age_sec=kwargs.get("physio_age_sec", 0.0),
+            spatial_age_sec=kwargs.get("spatial_age_sec", 0.0),
+            env_age_sec=kwargs.get("env_age_sec", 0.0),
+            is_manual_override=is_manual_override,
+            mode=resolved_mode
+        )
+
+        # Execute deterministic reliability-aware adaptive fusion
+        adaptive_eval = self.adaptive_fusion_engine.fuse(
+            p_score=phys_norm if (physiological_stress_score is not None and np.isfinite(physiological_stress_score)) else None,
+            l_score=loc_norm if (location_risk_score is not None and np.isfinite(location_risk_score)) else None,
+            e_score=environment_risk_score if is_env_available else None,
+            physio_telemetry=physio_telemetry,
+            spatial_analysis=spatial_analysis,
+            environmental_res=environmental_res,
+            physio_age_sec=kwargs.get("physio_age_sec", 0.0),
+            spatial_age_sec=kwargs.get("spatial_age_sec", 0.0),
+            env_age_sec=kwargs.get("env_age_sec", 0.0),
+            is_manual_override=is_manual_override
+        )
+
+        logger.info(
+            "predict_fusion: P=%.4f, L=%.4f, E=%s -> status=%s",
+            phys_norm, loc_norm, environment_risk_score,
+            adaptive_eval["status"]
+        )
+
+        # Handle complete failure / all modalities missing
+        if all_modalities_missing or adaptive_eval["status"] == "UNAVAILABLE" or adaptive_eval["overall_context_index"] is None:
+            return {
+                "fusion_mode": "UNAVAILABLE",
+                "available_modalities": [],
+                "missing_modalities": ["physiological", "spatial", "environmental"],
+                "excluded_modalities": ["physiological", "spatial", "environmental"],
+                "physiological_stress_score": None,
+                "location_risk_score": None,
+                "environment_risk_score": None,
+                "environmental_context_score": None,
+                "threat_probability": None,
+                "threat_score_pct": None,
+                "threat_status": "UNAVAILABLE",
+                "context_status": "UNAVAILABLE",
+                "context_classification": "UNAVAILABLE",
+                "overall_context_index": None,
+                "overall_context_index_pct": None,
+                "experimental_context_index": None,
+                "experimental_context_index_pct": None,
+                "partial_dual_branch_index": None,
+                "partial_dual_branch_index_pct": None,
+                "active_model_name": "RELIABILITY-AWARE ADAPTIVE FUSION (UNAVAILABLE)",
+                "is_meta_learner_trained": False,
+                "meta_model_status": "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED",
+                "learned_gating_status": "LEARNED GATING: NOT TRAINED",
+                "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
+                "adaptive_weights": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
+                "weights": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
+                "baseline_weights": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
+                "partial_weights": {"physiological": 0.0, "location": 0.0},
+                "contributions": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
+                "contributions_pct": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
+                "partial_contributions": {"physiological": 0.0, "location": 0.0},
+                "partial_contributions_pct": {"physiological": 0.0, "location": 0.0},
+                "modality_contributions": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
+                "modality_contributions_pct": {"physiological": 0.0, "location": 0.0, "environment": 0.0},
+                "modality_reliabilities": adaptive_eval["modality_reliabilities"],
+                "formula_str": "UNAVAILABLE (All modalities missing or invalid)",
+                "notice": "All input modalities are unavailable or invalid. Assessment cannot be computed.",
+                "explanation": "Assessment unavailable: None of the input modalities provide valid physical or contextual measurements. Zero risk is not fabricated.",
+                "modalities_metadata": modalities_metadata,
+                "active_fusion_mode": "RELIABILITY_AWARE",
+                "active_fusion_mode_name": "Reliability-Aware Adaptive Fusion",
+                "reliability_summary": dynamic_eval["reliability_summary"],
+                "candidate_risk_categories": dynamic_eval["candidate_risk_categories"],
+                "uncertainty_index": 1.0,
+                "dynamic_gating_details": dynamic_eval.get("dynamic_gating_details"),
+                "safety_policy": dynamic_eval["safety_policy"]
+            }
+
+        # Extract adaptive results
+        adaptive_weights = adaptive_eval["adaptive_weights"]
+        alpha_p = adaptive_weights["physiological"]
+        alpha_l = adaptive_weights["location"]
+        alpha_e = adaptive_weights["environment"]
+        active_score = adaptive_eval["overall_context_index"]
+        active_score_pct = adaptive_eval["overall_context_index_pct"]
+        active_status = adaptive_eval["context_classification"]
+        contrib_p = adaptive_eval["modality_contributions"]["physiological"]
+        contrib_l = adaptive_eval["modality_contributions"]["location"]
+        contrib_e = adaptive_eval["modality_contributions"]["environment"]
+        formula_str = adaptive_eval["formula_str"]
+        avail_mods = adaptive_eval["available_modalities"]
+        excl_mods = adaptive_eval["excluded_modalities"]
+
         # -----------------------------------------------------------------
         # BRANCH A: PARTIAL DUAL-BRANCH CONTEXT INDEX (ENV IS MISSING/UNKNOWN)
         # -----------------------------------------------------------------
         if not is_env_available:
-            w_p_raw = float(weight_physio)
-            w_l_raw = float(weight_location)
-            dual_sum = w_p_raw + w_l_raw
-            if dual_sum > 0:
-                w_p_partial = w_p_raw / dual_sum
-                w_l_partial = w_l_raw / dual_sum
-            else:
-                w_p_partial, w_l_partial = 0.40 / 0.65, 0.25 / 0.65
+            alpha_p_pct = round(alpha_p * 100.0, 2)
+            alpha_l_pct = round(alpha_l * 100.0, 2)
 
-            contrib_p = w_p_partial * phys_norm
-            contrib_l = w_l_partial * loc_norm
-            partial_score = round(contrib_p + contrib_l, 4)
-            partial_pct = round(partial_score * 100.0, 2)
-
-            if partial_score <= config.RISK_THRESHOLDS["LOW_MAX"]:
-                partial_status = "STANDARD CONTEXT"
-            elif partial_score <= config.RISK_THRESHOLDS["MEDIUM_MAX"]:
-                partial_status = "ELEVATED CONTEXT"
-            else:
-                partial_status = "HIGH CONTEXT"
-
-            explanation = self._generate_partial_explanation(
-                partial_pct, partial_status, phys_norm, loc_norm
+            explanation = (
+                f"Partial Context Assessment: The partial dual-branch context index is {active_score_pct:.2f}% ({active_status}). "
+                f"It combines physiological stress ({phys_norm * 100.0:.1f}%, {alpha_p_pct:.2f}% re-normalized weight) and location context risk ({loc_norm * 100.0:.1f}%, {alpha_l_pct:.2f}% re-normalized weight). "
+                f"Environmental context is UNKNOWN/unavailable and is omitted without silent substitution. "
+                f"Formula: {formula_str}. "
+                f"Limitations: Situational illumination and crowd density are not factored into this partial index. It describes contextual inputs only and is not a validated threat prediction."
             )
 
             return {
                 "fusion_mode": "PARTIAL_DUAL_BRANCH",
                 "available_modalities": ["physiological", "spatial"],
                 "missing_modalities": ["environmental"],
+                "excluded_modalities": excl_mods,
                 # Base model scores
                 "physiological_stress_score": phys_norm,
                 "location_risk_score": loc_norm,
@@ -400,42 +487,67 @@ class MultimodalThreatPredictor:
                 "environmental_lighting_context_score": None,
                 "environmental_model_provenance": "MISSING / UNKNOWN (Excluded from fusion)",
                 "modalities_metadata": modalities_metadata,
-                # Partial Dual-Branch Specifics
-                "partial_dual_branch_index": partial_score,
-                "partial_dual_branch_index_pct": partial_pct,
+                # Adaptive & Partial Dual-Branch Specifics
+                "overall_context_index": active_score,
+                "overall_context_index_pct": active_score_pct,
+                "partial_dual_branch_index": active_score,
+                "partial_dual_branch_index_pct": active_score_pct,
                 "partial_fusion_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
-                "partial_formula": "R_partial = (0.40 * P + 0.25 * L) / 0.65",
+                "partial_formula": formula_str,
+                "formula_str": formula_str,
+                "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
+                "adaptive_weights": adaptive_weights,
+                "weights": adaptive_weights,
                 "partial_weights": {
-                    "physiological": round(w_p_partial, 4),
-                    "location": round(w_l_partial, 4)
+                    "physiological": alpha_p,
+                    "location": alpha_l
+                },
+                "baseline_weights": {
+                    "physiological": alpha_p,
+                    "location": alpha_l,
+                    "environment": 0.0
+                },
+                "contributions": {
+                    "physiological": contrib_p,
+                    "location": contrib_l,
+                    "environment": 0.0
+                },
+                "contributions_pct": {
+                    "physiological": round(contrib_p * 100.0, 2),
+                    "location": round(contrib_l * 100.0, 2),
+                    "environment": 0.0
                 },
                 "partial_contributions": {
-                    "physiological": round(contrib_p, 4),
-                    "location": round(contrib_l, 4)
+                    "physiological": contrib_p,
+                    "location": contrib_l
                 },
                 "partial_contributions_pct": {
                     "physiological": round(contrib_p * 100.0, 2),
                     "location": round(contrib_l * 100.0, 2)
                 },
+                "modality_contributions": adaptive_eval["modality_contributions"],
+                "modality_contributions_pct": adaptive_eval["modality_contributions_pct"],
+                "modality_reliabilities": adaptive_eval["modality_reliabilities"],
                 # Complete 3-branch index is explicitly None
                 "experimental_context_index": None,
                 "experimental_context_index_pct": None,
-                "threat_probability": partial_score,
-                "threat_score_pct": partial_pct,
-                "threat_status": partial_status,
-                "context_status": partial_status,
-                "context_classification": partial_status,
+                "threat_probability": active_score,
+                "threat_score_pct": active_score_pct,
+                "threat_status": active_status,
+                "context_status": active_status,
+                "context_classification": active_status,
                 "active_model_name": "PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)",
                 "is_meta_learner_trained": False,
                 "meta_model_status": "NOT EVALUATED (MISSING ENVIRONMENTAL MODALITY)",
+                "learned_gating_status": "LEARNED GATING: NOT TRAINED",
                 "notice": "A complete 3-branch context index is unavailable because environmental context is missing or unknown. Operating in fallback dual-branch mode.",
                 "clarification": "This partial index evaluates physiological biometrics and spatial location only. Environmental conditions (lighting, crowd density) are excluded.",
                 "stacking_meta_probability": None,
                 "stacking_meta_status": None,
                 "stacking_explainability": None,
-                "baseline_threat_probability": partial_score,
-                "baseline_threat_score_pct": partial_pct,
-                "baseline_status": partial_status,
+                "baseline_threat_probability": active_score,
+                "baseline_threat_score_pct": active_score_pct,
+                "baseline_status": active_status,
                 "threshold_used": threshold,
                 "explanation": explanation,
                 # Dynamic Multimodal Intelligence Enhancements
@@ -453,67 +565,43 @@ class MultimodalThreatPredictor:
         # -----------------------------------------------------------------
         env_norm = float(np.clip(environment_risk_score, 0.0, 1.0))
 
-        # 1. Baseline Weighted late fusion
-        w_p = float(weight_physio)
-        w_l = float(weight_location)
-        w_e = float(weight_environment)
-        total_w = w_p + w_l + w_e
-        if total_w > 0:
-            w_p_norm, w_l_norm, w_e_norm = w_p / total_w, w_l / total_w, w_e / total_w
-        else:
-            w_p_norm, w_l_norm, w_e_norm = 0.40, 0.25, 0.35
+        alpha_p_pct = round(alpha_p * 100.0, 1)
+        alpha_l_pct = round(alpha_l * 100.0, 1)
+        alpha_e_pct = round(alpha_e * 100.0, 1)
 
-        contrib_p = w_p_norm * phys_norm
-        contrib_l = w_l_norm * loc_norm
-        contrib_e = w_e_norm * env_norm
-
-        baseline_score = round(contrib_p + contrib_l + contrib_e, 4)
-        baseline_pct = round(baseline_score * 100.0, 2)
-
-        # Neutral heuristic classification using configured project thresholds
-        if baseline_score <= config.RISK_THRESHOLDS["LOW_MAX"]:
-            baseline_status = "STANDARD CONTEXT"
-        elif baseline_score <= config.RISK_THRESHOLDS["MEDIUM_MAX"]:
-            baseline_status = "ELEVATED CONTEXT"
-        else:
-            baseline_status = "HIGH CONTEXT"
-
-        # 2. Level 1 Stacking Meta-Learner (strictly gated by production eligibility)
-        is_prod_stacker_trained = (
-            self.stacking_pipeline.is_trained
-            and getattr(self.stacking_pipeline, "production_eligible", False)
+        is_nominal_baseline = (
+            abs(alpha_p - 0.40) < 0.005 and 
+            abs(alpha_l - 0.25) < 0.005 and 
+            abs(alpha_e - 0.35) < 0.005
         )
 
-        if is_prod_stacker_trained:
-            stacking_res = self.stacking_pipeline.predict(phys_norm, loc_norm, env_norm)
-            active_score = stacking_res["active_threat_probability"]
-            active_score_pct = stacking_res["active_threat_score_pct"]
-            active_status = stacking_res["active_threat_status"]
-            active_model = stacking_res["model_used"]
-            meta_model_status = "TRAINED (Production-Eligible)"
-            explanation = self._generate_stacking_explanation(
-                active_score_pct, active_status, phys_norm, loc_norm, env_norm, stacking_res.get("stacking_explainability")
-            )
-            stacking_meta_prob = stacking_res.get("stacking_meta_probability")
-            stacking_meta_stat = stacking_res.get("stacking_meta_status")
-            stacking_explain = stacking_res.get("stacking_explainability")
-        else:
-            active_score = baseline_score
-            active_score_pct = baseline_pct
-            active_status = baseline_status
-            active_model = "Experimental Weighted Context Index"
-            meta_model_status = "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED"
+        if is_nominal_baseline:
+            active_model_name = "Experimental Weighted Context Index"
             explanation = self._generate_baseline_explanation(
-                baseline_pct, active_status, phys_norm, loc_norm, env_norm
+                active_score_pct, active_status, phys_norm, loc_norm, env_norm
             )
-            stacking_meta_prob = None
-            stacking_meta_stat = None
-            stacking_explain = None
+            clarification = (
+                "This index represents a heuristic combination of physiological, spatial "
+                "and environmental context scores. It is not a validated threat prediction."
+            )
+        else:
+            active_model_name = "Reliability-Aware Adaptive Context Index"
+            explanation = (
+                f"Context Assessment: The reliability-aware adaptive context index is {active_score_pct:.2f}% ({active_status}). "
+                f"It combines physiological stress ({phys_norm * 100.0:.1f}%, {alpha_p_pct:.1f}% adaptive weight), location context risk ({loc_norm * 100.0:.1f}%, {alpha_l_pct:.1f}% adaptive weight), "
+                f"and environmental context risk ({env_norm * 100.0:.1f}%, {alpha_e_pct:.1f}% adaptive weight) using data freshness and sensor quality weighting. "
+                f"Formula: {formula_str}. "
+                f"This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe."
+            )
+            clarification = (
+                "This index represents a reliability-aware adaptive combination of physiological, spatial and environmental context scores. It is not a validated threat prediction."
+            )
 
         return {
             "fusion_mode": "THREE_BRANCH_FUSION",
             "available_modalities": ["physiological", "spatial", "environmental"],
             "missing_modalities": [],
+            "excluded_modalities": excl_mods,
             # Base model scores
             "physiological_stress_score": phys_norm,
             "location_risk_score": loc_norm,
@@ -525,44 +613,48 @@ class MultimodalThreatPredictor:
             "environmental_model_provenance": "SYNTHETIC-DATA TRAINED MODEL (EXPERIMENTAL PREDICTION)",
             # Provenance flags
             "modalities_metadata": modalities_metadata,
-            # Active decision (either stacking or baseline)
+            # Active decision (Reliability-Aware Adaptive Fusion)
             "threat_probability": active_score,
             "threat_score_pct": active_score_pct,
             "threat_status": active_status,
             "context_status": active_status,
             "context_classification": active_status,
-            "active_model_name": active_model,
-            "is_meta_learner_trained": is_prod_stacker_trained,
-            "meta_model_status": meta_model_status,
+            "overall_context_index": active_score,
+            "overall_context_index_pct": active_score_pct,
+            "active_model_name": active_model_name,
+            "is_meta_learner_trained": False,
+            "meta_model_status": "UNTRAINED — VALID MULTIMODAL THREAT DATASET REQUIRED",
+            "learned_gating_status": "LEARNED GATING: NOT TRAINED",
+            "fusion_method": "RELIABILITY_AWARE_ADAPTIVE",
             "experimental_context_index": active_score,
             "experimental_context_index_pct": active_score_pct,
             "partial_dual_branch_index": None,
             "partial_dual_branch_index_pct": None,
             "notice": "A validated multimodal threat-prediction model is not currently available because synchronized observations and independently verified outcome labels have not yet been collected.",
-            "clarification": "This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.",
-            # Stacking Meta-Learner details
-            "stacking_meta_probability": stacking_meta_prob,
-            "stacking_meta_status": stacking_meta_stat,
-            "stacking_explainability": stacking_explain,
-            # Baseline details
-            "baseline_threat_probability": baseline_score,
-            "baseline_threat_score_pct": baseline_pct,
-            "baseline_status": baseline_status,
-            "baseline_weights": {
-                "physiological": w_p_norm,
-                "location": w_l_norm,
-                "environment": w_e_norm
-            },
+            "clarification": clarification,
+            "stacking_meta_probability": None,
+            "stacking_meta_status": None,
+            "stacking_explainability": None,
+            "baseline_threat_probability": active_score,
+            "baseline_threat_score_pct": active_score_pct,
+            "baseline_status": active_status,
+            "formula_str": formula_str,
+            "adaptive_weights": adaptive_weights,
+            "weights": adaptive_weights,
+            "baseline_weights": adaptive_weights,
             "contributions": {
                 "physiological": contrib_p,
                 "location": contrib_l,
                 "environment": contrib_e
             },
             "contributions_pct": {
-                "physiological": contrib_p * 100.0,
-                "location": contrib_l * 100.0,
-                "environment": contrib_e * 100.0
+                "physiological": round(contrib_p * 100.0, 2),
+                "location": round(contrib_l * 100.0, 2),
+                "environment": round(contrib_e * 100.0, 2)
             },
+            "modality_contributions": adaptive_eval["modality_contributions"],
+            "modality_contributions_pct": adaptive_eval["modality_contributions_pct"],
+            "modality_reliabilities": adaptive_eval["modality_reliabilities"],
             "threshold_used": threshold,
             "explanation": explanation,
             # Dynamic Multimodal Intelligence Enhancements

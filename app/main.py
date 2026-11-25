@@ -2,6 +2,7 @@ import os
 import sys
 import html
 import json
+import time
 import datetime
 import pandas as pd
 import numpy as np
@@ -143,75 +144,87 @@ def render_header():
     st.html(header_html)
 
 def render_overall_risk_panel(res: dict):
-    phys_norm = float(res.get("physiological_stress_score", 0.0))
-    loc_norm = float(res.get("location_risk_score", 0.0))
+    phys_norm = float(res.get("physiological_stress_score", 0.0)) if res.get("physiological_stress_score") is not None else 0.0
+    loc_norm = float(res.get("location_risk_score", 0.0)) if res.get("location_risk_score") is not None else 0.0
     env_norm = res.get("environment_risk_score")
 
     phys_pct = phys_norm * 100.0
     loc_pct = loc_norm * 100.0
     env_pct = (float(env_norm) * 100.0) if env_norm is not None else None
 
-    fusion_mode = res.get("fusion_mode", "THREE_BRANCH_FUSION")
-    is_stacker_trained = bool(res.get("is_meta_learner_trained", False))
-    status = str(res.get("context_status", res.get("context_classification", "STANDARD CONTEXT")))
+    # Retrieve real values computed by backend fusion engine
+    overall_score = res.get("overall_context_index")
+    if overall_score is None:
+        overall_score = res.get("threat_probability")
+
+    overall_pct = res.get("overall_context_index_pct")
+    if overall_pct is None and overall_score is not None:
+        overall_pct = overall_score * 100.0
+    elif overall_pct is None:
+        overall_pct = res.get("threat_score_pct")
+
+    status = str(res.get("context_status", res.get("context_classification", res.get("threat_status", "STANDARD CONTEXT"))))
+    fusion_method = res.get("fusion_method", "RELIABILITY_AWARE_ADAPTIVE")
+    learned_gating_status = res.get("learned_gating_status", "LEARNED GATING: NOT TRAINED")
+    formula_str = res.get("formula_str", "")
+    adaptive_weights = res.get("adaptive_weights") or res.get("weights") or {}
+    contribs_pct = res.get("modality_contributions_pct") or {}
+    reliabilities = res.get("modality_reliabilities") or {}
+    excluded_modalities = res.get("excluded_modalities") or res.get("missing_modalities") or []
     explanation_txt = html.escape(str(res.get("explanation", "")))
 
     if status == "HIGH CONTEXT":
         status_badge_cls = "score-danger"
     elif status == "ELEVATED CONTEXT":
         status_badge_cls = "score-warn"
+    elif status == "UNAVAILABLE":
+        status_badge_cls = "score-danger"
     else:
         status_badge_cls = "score-safe"
 
     # =========================================================================
-    # CASE 1: PARTIAL DUAL-BRANCH CONTEXT INDEX (ENV MISSING / UNKNOWN)
+    # CASE 1: ALL MODALITIES UNAVAILABLE (NO ZERO RISK FABRICATED)
     # =========================================================================
-    if fusion_mode == "PARTIAL_DUAL_BRANCH" or res.get("experimental_context_index") is None:
-        partial_pct = float(res.get("partial_dual_branch_index_pct", res.get("threat_score_pct", 0.0)))
-        contrib_p_partial = phys_pct * (0.40 / 0.65)
-        contrib_l_partial = loc_pct * (0.25 / 0.65)
-
+    if overall_score is None or status == "UNAVAILABLE":
         rendered = f"""<div class="med-overall-panel">
   <div class="med-overall-header">
-    Overall Context Assessment — Partial Dual-Branch Context Index (Fallback Mode)
+    Overall Context Assessment — Reliability-Aware Adaptive Multimodal Fusion
   </div>
   <div class="med-overall-content">
     <div class="med-score-hero">
-      <div class="med-score-hero-title">PARTIAL DUAL-BRANCH CONTEXT INDEX (PHYSIOLOGICAL + SPATIAL ONLY)</div>
-      <div class="med-score-hero-num">{partial_pct:.2f}%</div>
+      <div class="med-score-hero-title">OVERALL CONTEXT ASSESSMENT</div>
+      <div class="med-score-hero-num" style="font-size: 1.8rem; color: #EF4444;">UNAVAILABLE</div>
       <div style="margin: 8px 0; font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);">
-        Context Classification: <span class="med-score-badge {status_badge_cls}" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">{status}</span>
+        Context Classification: <span class="med-score-badge score-danger" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">UNAVAILABLE</span>
       </div>
-      <div style="margin-top: 6px;">
-        <span class="med-provenance-pill pill-rule">Meta-Learner: NOT TRAINED</span>
+      <div style="margin-top: 6px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;">
+        <span class="med-provenance-pill pill-rule">Active: Reliability-Aware Adaptive Fusion</span>
+        <span class="med-provenance-pill pill-rule">Learned Gating: NOT TRAINED</span>
       </div>
       <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic;">
-        This partial index evaluates physiological stress and spatial location only. Environmental context is UNKNOWN.
+        No neutral values or zero-risk scores are fabricated when input measurements are unavailable or invalid.
       </div>
     </div>
     <div class="med-breakdown-box">
       <div class="med-alert-warn" style="margin-bottom: 12px; font-size: 0.88rem; line-height: 1.45;">
-        ⚠️ <b>COMPLETE THREE-BRANCH CONTEXT INDEX UNAVAILABLE (ENVIRONMENTAL UNKNOWN):</b> Environmental context inputs are missing or unverified. No neutral values are silently substituted.
+        ⚠️ <b>MULTIMODAL CONTEXT ASSESSMENT UNAVAILABLE:</b> All input modalities (Physiological, Spatial, Environmental) are either missing, disconnected, or invalid.
       </div>
       <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;">
-        Partial Dual-Branch Re-Normalized Weighting Breakdown
+        Modality Input Health &amp; Reliability Status
       </div>
       <div class="med-breakdown-item">
-        <span>Physiological Stress (Re-normalized 61.54% Weight):</span>
-        <span><b>{phys_pct:.1f}% × 0.6154 = {contrib_p_partial:.2f}%</b></span>
+        <span>Physiological Stream:</span>
+        <span><b>UNAVAILABLE (Missing or invalid biometrics)</b></span>
       </div>
       <div class="med-breakdown-item">
-        <span>Location Context Risk (Re-normalized 38.46% Weight):</span>
-        <span><b>{loc_pct:.1f}% × 0.3846 = {contrib_l_partial:.2f}%</b></span>
+        <span>Location Stream:</span>
+        <span><b>UNAVAILABLE (GPS coordinates missing)</b></span>
       </div>
-      <div class="med-breakdown-item" style="color: var(--text-secondary); opacity: 0.7;">
-        <span>Environmental Context (Excluded):</span>
-        <span><b>UNKNOWN (Excluded from index calculation)</b></span>
+      <div class="med-breakdown-item">
+        <span>Environmental Stream:</span>
+        <span><b>UNAVAILABLE (Environmental context offline)</b></span>
       </div>
-      <div style="margin-top: 10px; font-size: 0.83rem; color: var(--text-secondary); font-style: italic;">
-        ℹ️ <b>Formula:</b> <code>R_partial = (0.40 × P + 0.25 × L) / 0.65</code>. Situational illumination and crowd density are omitted.
-      </div>
-      <div class="med-rationale-note">
+      <div class="med-rationale-note" style="margin-top: 10px;">
         <b>Decision Rationale:</b> {explanation_txt}
       </div>
     </div>
@@ -221,94 +234,93 @@ def render_overall_risk_panel(res: dict):
         return
 
     # =========================================================================
-    # CASE 2: COMPLETE THREE-BRANCH CONTEXT ASSESSMENT (ALL 3 PRESENT)
+    # CASE 2: ACTIVE RELIABILITY-AWARE ADAPTIVE FUSION
     # =========================================================================
-    final_prob = float(res.get("experimental_context_index", res.get("threat_probability", 0.0)))
-    final_pct = float(res.get("experimental_context_index_pct", res.get("threat_score_pct", final_prob * 100.0)))
+    # Extract actual adaptive weights from backend fusion result
+    alpha_p = float(adaptive_weights.get("physiological", 0.0))
+    alpha_l = float(adaptive_weights.get("location", 0.0))
+    alpha_e = float(adaptive_weights.get("environment", 0.0))
 
-    contrib_p = phys_pct * 0.40
-    contrib_l = loc_pct * 0.25
-    contrib_e = (env_pct * 0.35) if env_pct is not None else 0.0
+    contrib_p_disp = contribs_pct.get("physiological", alpha_p * phys_pct)
+    contrib_l_disp = contribs_pct.get("location", alpha_l * loc_pct)
+    contrib_e_disp = contribs_pct.get("environment", (alpha_e * env_pct) if env_pct is not None else 0.0)
 
-    if is_stacker_trained:
-        # Rendered only when an independently verified production empirical model has been trained
-        meta_explain = res.get("stacking_explainability") or {}
-        b0 = float(meta_explain.get("intercept_beta0", 0.0))
-        coefs = meta_explain.get("coefficients", {})
-        coef_items = " | ".join([f"{k}: β={v:+.3f}" for k, v in coefs.items()])
-        rendered = f"""<div class="med-overall-panel">
-  <div class="med-overall-header">
-    Overall Context Assessment — Level 1 Stacking Ensemble (Empirical)
-  </div>
-  <div class="med-overall-content">
-    <div class="med-score-hero">
-      <div class="med-score-hero-title">EXPERIMENTAL WEIGHTED CONTEXT INDEX</div>
-      <div class="med-score-hero-num">{final_pct:.2f}%</div>
-      <div style="margin: 8px 0; font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);">
-        Context Classification: <span class="med-score-badge {status_badge_cls}" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">{status}</span>
-      </div>
-      <div style="margin-top: 6px;">
-        <span class="med-provenance-pill pill-stacking">⚙️ Meta-Learner: TRAINED ML (Production-Eligible)</span>
-      </div>
-      <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic;">
-        This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.
-      </div>
-    </div>
-    <div class="med-breakdown-box">
-      <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;">
-        Learned Stacking Formulation: <code>logit(P) = β₀ + β₁P₁ + β₂P₂ + β₃P₃</code>
-      </div>
-      <div class="med-metric-row" style="font-size: 0.84rem; background: #F8FAFC; padding: 6px 8px; border-radius: 4px; margin-bottom: 6px;">
-        <span><b>Learned Coefficients:</b></span>
-        <span>β₀={b0:+.3f} | {coef_items}</span>
-      </div>
-      <div class="med-rationale-note">
-        <b>Decision Rationale:</b> {explanation_txt}
-      </div>
-    </div>
-  </div>
-</div>"""
+    # Reliability & Freshness metrics from backend report
+    rel_p = reliabilities.get("physiological", {})
+    rel_l = reliabilities.get("location", {})
+    rel_e = reliabilities.get("environment", {})
+
+    q_p = rel_p.get("composite_q", 1.0)
+    q_l = rel_l.get("composite_q", 1.0)
+    q_e = rel_e.get("composite_q", 1.0)
+
+    fresh_p_pct = rel_p.get("freshness", 1.0) * 100.0
+    fresh_l_pct = rel_l.get("freshness", 1.0) * 100.0
+    fresh_e_pct = rel_e.get("freshness", 1.0) * 100.0
+
+    age_p = rel_p.get("age_seconds", 0.0)
+    age_l = rel_l.get("age_seconds", 0.0)
+    age_e = rel_e.get("age_seconds", 0.0)
+
+    # Environmental line display
+    if env_pct is not None and alpha_e > 0.0:
+        env_line = f"""<div class="med-breakdown-item">
+        <span>Environmental Context ({alpha_e * 100.0:.1f}% Adaptive Weight · q={q_e:.2f} · Freshness {fresh_e_pct:.0f}% [age {age_e:.1f}s]):</span>
+        <span><b>{env_pct:.1f}% × {alpha_e:.4f} = {contrib_e_disp:.2f}%</b></span>
+      </div>"""
     else:
-        # Production standard state: Untrained meta-learner with Experimental Weighted Context Index
-        rendered = f"""<div class="med-overall-panel">
+        env_line = f"""<div class="med-breakdown-item" style="color: var(--text-secondary); opacity: 0.75;">
+        <span>Environmental Context (Excluded · 0.0% Weight):</span>
+        <span><b>UNKNOWN / EXCLUDED (Received zero contribution)</b></span>
+      </div>"""
+
+    # Excluded modalities alert
+    if excluded_modalities:
+        ex_names = ", ".join([m.capitalize() for m in excluded_modalities])
+        ex_alert = f"""<div class="med-alert-warn" style="margin-bottom: 10px; font-size: 0.84rem; line-height: 1.4;">
+        ℹ️ <b>Excluded Modality:</b> {ex_names} received zero weight due to missing or unverified measurements. Remaining valid modalities are re-normalized to 100%.
+      </div>"""
+    else:
+        ex_alert = ""
+
+    rendered = f"""<div class="med-overall-panel">
   <div class="med-overall-header">
-    Overall Context Assessment — Experimental Weighted Context Index
+    Overall Context Assessment — Reliability-Aware Adaptive Multimodal Fusion
   </div>
   <div class="med-overall-content">
     <div class="med-score-hero">
-      <div class="med-score-hero-title">EXPERIMENTAL WEIGHTED CONTEXT INDEX</div>
-      <div class="med-score-hero-num">{final_pct:.2f}%</div>
+      <div class="med-score-hero-title">OVERALL CONTEXT ASSESSMENT</div>
+      <div class="med-score-hero-num">{overall_pct:.2f}%</div>
       <div style="margin: 8px 0; font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);">
         Context Classification: <span class="med-score-badge {status_badge_cls}" style="font-size: 0.85rem; padding: 2px 8px; vertical-align: middle;">{status}</span>
       </div>
-      <div style="margin-top: 6px;">
-        <span class="med-provenance-pill pill-rule">Meta-Learner: NOT TRAINED</span>
+      <div style="margin-top: 6px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;">
+        <span class="med-provenance-pill pill-ml">⚡ Active: Reliability-Aware Adaptive Fusion</span>
+        <span class="med-provenance-pill pill-rule">⚙️ Learned Gating: NOT TRAINED</span>
       </div>
       <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic;">
-        This index represents a heuristic combination of physiological, spatial and environmental context scores. It is not a validated threat prediction.
+        This index is a contextual assessment derived from biometric, spatial and environmental observations. It is not a validated threat probability.
       </div>
     </div>
     <div class="med-breakdown-box">
-      <div class="med-alert-warn" style="margin-bottom: 12px; font-size: 0.88rem; line-height: 1.45;">
-        ⚠️ <b>Important Notice:</b> A validated multimodal threat-prediction model is not currently available because synchronized observations and independently verified outcome labels have not yet been collected.
-      </div>
+      {ex_alert}
       <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 8px;">
-        Heuristic Weighting Breakdown (Reference Baseline)
+        Reliability-Aware Adaptive Weighting Breakdown
       </div>
       <div class="med-breakdown-item">
-        <span>Physiological Stress (40% Weight):</span>
-        <span><b>{phys_pct:.1f}% × 0.40 = {contrib_p:.2f}%</b></span>
+        <span>Physiological Stress ({alpha_p * 100.0:.1f}% Adaptive Weight · q={q_p:.2f} · Freshness {fresh_p_pct:.0f}% [age {age_p:.1f}s]):</span>
+        <span><b>{phys_pct:.1f}% × {alpha_p:.4f} = {contrib_p_disp:.2f}%</b></span>
       </div>
       <div class="med-breakdown-item">
-        <span>Location Context Risk (25% Weight):</span>
-        <span><b>{loc_pct:.1f}% × 0.25 = {contrib_l:.2f}%</b></span>
+        <span>Location Context Risk ({alpha_l * 100.0:.1f}% Adaptive Weight · q={q_l:.2f} · Freshness {fresh_l_pct:.0f}% [age {age_l:.1f}s]):</span>
+        <span><b>{loc_pct:.1f}% × {alpha_l:.4f} = {contrib_l_disp:.2f}%</b></span>
       </div>
-      <div class="med-breakdown-item">
-        <span>Environmental Context Risk (35% Weight):</span>
-        <span><b>{env_pct:.1f}% × 0.35 = {contrib_e:.2f}%</b></span>
-      </div>
+      {env_line}
       <div style="margin-top: 10px; font-size: 0.83rem; color: var(--text-secondary); font-style: italic;">
-        ℹ️ <b>Clarification:</b> This value describes contextual inputs only and does not establish whether a person or location is safe or unsafe.
+        ℹ️ <b>Active Formula:</b> <code>{html.escape(formula_str)}</code>
+      </div>
+      <div style="margin-top: 6px; font-size: 0.78rem; color: var(--text-secondary);">
+        Weighting formulation: <code>q_i = validity_i × freshness_i × source_reliability_i</code>, <code>u_i = b_i × q_i</code>, <code>α_i = u_i / Σ u_j</code>. Baseline priors: <code>b = [40%, 25%, 35%]</code>.
       </div>
       <div class="med-rationale-note">
         <b>Decision Rationale:</b> {explanation_txt}
@@ -316,6 +328,7 @@ def render_overall_risk_panel(res: dict):
     </div>
   </div>
 </div>"""
+    st.html(rendered)
     st.html(rendered)
 
 @st.cache_data(show_spinner=False)
@@ -592,6 +605,16 @@ if "client_hour" not in st.session_state:
     st.session_state["client_hour"] = None
 if "client_time_str" not in st.session_state:
     st.session_state["client_time_str"] = None
+if "physio_timestamp" not in st.session_state:
+    st.session_state["physio_timestamp"] = time.time()
+if "gps_timestamp" not in st.session_state:
+    st.session_state["gps_timestamp"] = time.time()
+if "env_timestamp" not in st.session_state:
+    st.session_state["env_timestamp"] = time.time()
+if "physio_telemetry" not in st.session_state:
+    st.session_state["physio_telemetry"] = None
+if "env_res" not in st.session_state:
+    st.session_state["env_res"] = None
 
 landmark_names = [lm["name"] for lm in config.BIT_MESRA_LANDMARKS]
 if "selected_landmark_name" not in st.session_state or st.session_state["selected_landmark_name"] not in landmark_names:
@@ -632,6 +655,7 @@ with tab1:
             telemetry = evaluate_subject_biometrics(selected_subject, session_option)
             st.session_state["physio_score"] = telemetry["physio_score"]
             st.session_state["physio_telemetry"] = telemetry
+            st.session_state["physio_timestamp"] = time.time()
             st.session_state["current_physio_subject"] = selected_subject
             st.session_state["current_physio_window"] = session_option
 
@@ -642,7 +666,14 @@ with tab1:
                     physiological_stress_score=st.session_state["physio_score"],
                     location_risk_score=loc_score_val,
                     environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50
+                    threshold=0.50,
+                    physio_telemetry=st.session_state.get("physio_telemetry"),
+                    spatial_analysis=st.session_state.get("location_res"),
+                    environmental_res=st.session_state.get("env_res"),
+                    physio_age_sec=max(0.0, time.time() - st.session_state.get("physio_timestamp", time.time())),
+                    spatial_age_sec=max(0.0, time.time() - st.session_state.get("gps_timestamp", time.time())),
+                    env_age_sec=max(0.0, time.time() - st.session_state.get("env_timestamp", time.time())),
+                    is_manual_override=bool(st.session_state.get("cb_manual_env_override") or st.session_state.get("location_override_active"))
                 )
 
         phys_score = float(st.session_state["physio_score"])
@@ -1025,6 +1056,10 @@ with tab1:
                 "calibrated_environmental_score": None
             }
 
+        # Store env_res and timestamp
+        st.session_state["env_res"] = env_pred
+        st.session_state["env_timestamp"] = time.time()
+
         # Defensive environmental score extraction and validation
         env_score_candidate = env_pred.get("environmental_context_score")
         if env_score_candidate is None:
@@ -1130,7 +1165,14 @@ with tab1:
                     physiological_stress_score=st.session_state["physio_score"],
                     location_risk_score=loc_score_val,
                     environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50
+                    threshold=0.50,
+                    physio_telemetry=st.session_state.get("physio_telemetry"),
+                    spatial_analysis=st.session_state.get("location_res"),
+                    environmental_res=st.session_state.get("env_res"),
+                    physio_age_sec=max(0.0, time.time() - st.session_state.get("physio_timestamp", time.time())),
+                    spatial_age_sec=max(0.0, time.time() - st.session_state.get("gps_timestamp", time.time())),
+                    env_age_sec=max(0.0, time.time() - st.session_state.get("env_timestamp", time.time())),
+                    is_manual_override=bool(st.session_state.get("cb_manual_env_override") or st.session_state.get("location_override_active"))
                 )
             except Exception as e:
                 print(f"[app/main.py] Warning: Auto-update fusion failed: {e}", flush=True)
@@ -1205,7 +1247,14 @@ with tab1:
                     physiological_stress_score=st.session_state["physio_score"],
                     location_risk_score=loc_score_val,
                     environment_risk_score=st.session_state["env_score"],
-                    threshold=0.50
+                    threshold=0.50,
+                    physio_telemetry=st.session_state.get("physio_telemetry"),
+                    spatial_analysis=st.session_state.get("location_res"),
+                    environmental_res=st.session_state.get("env_res"),
+                    physio_age_sec=max(0.0, time.time() - st.session_state.get("physio_timestamp", time.time())),
+                    spatial_age_sec=max(0.0, time.time() - st.session_state.get("gps_timestamp", time.time())),
+                    env_age_sec=max(0.0, time.time() - st.session_state.get("env_timestamp", time.time())),
+                    is_manual_override=bool(st.session_state.get("cb_manual_env_override") or st.session_state.get("location_override_active"))
                 )
                 st.session_state["analyzed_threat"] = res
             except Exception as e:
@@ -1241,12 +1290,20 @@ with tab2:
         st.session_state["gps_status"] = "CONNECTED"
         st.session_state["location_res"] = analysis_res
         st.session_state["location_score"] = analysis_res["location_risk_score"]
+        st.session_state["gps_timestamp"] = time.time()
         if st.session_state.get("analyzed_threat") is not None:
             st.session_state["analyzed_threat"] = predictor.predict_fusion(
                 physiological_stress_score=st.session_state["physio_score"],
                 location_risk_score=st.session_state["location_score"],
                 environment_risk_score=st.session_state["env_score"],
-                threshold=0.50
+                threshold=0.50,
+                physio_telemetry=st.session_state.get("physio_telemetry"),
+                spatial_analysis=st.session_state.get("location_res"),
+                environmental_res=st.session_state.get("env_res"),
+                physio_age_sec=max(0.0, time.time() - st.session_state.get("physio_timestamp", time.time())),
+                spatial_age_sec=max(0.0, time.time() - st.session_state.get("gps_timestamp", time.time())),
+                env_age_sec=max(0.0, time.time() - st.session_state.get("env_timestamp", time.time())),
+                is_manual_override=True
             )
 
     def on_landmark_preset_change():

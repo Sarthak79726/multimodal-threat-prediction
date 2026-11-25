@@ -43,6 +43,7 @@ from src.fusion.meta_learner import (
     WeightedLateFusionBaseline
 )
 from src.fusion.calibration import ProbabilityCalibrator
+from src.fusion.adaptive_fusion import ReliabilityAwareAdaptiveFusionEngine
 
 logger = logging.getLogger("DynamicMultimodalFusionEngine")
 
@@ -65,6 +66,7 @@ class DynamicMultimodalFusionEngine:
 
         # Core Modality Sub-Engines & Baseline
         self.baseline_fusion = WeightedLateFusionBaseline(threshold=threshold)
+        self.adaptive_engine = ReliabilityAwareAdaptiveFusionEngine(baseline_priors=DEFAULT_BASELINE_WEIGHTS)
         self.gating_network = DynamicGatingNetwork()
         self.meta_learner = LogisticRegressionMetaLearner()
         self.multi_output = MultiOutputMetaLearner()
@@ -180,6 +182,20 @@ class DynamicMultimodalFusionEngine:
         # -----------------------------------------------------------------
         # STEP 4: FUSION INFERENCE (ACCORDING TO SELECTED MODE)
         # -----------------------------------------------------------------
+        # Evaluate deterministic reliability-aware adaptive fusion
+        adaptive_eval = self.adaptive_engine.fuse(
+            p_score=p_stress,
+            l_score=l_risk,
+            e_score=e_risk,
+            physio_telemetry=physio_telemetry,
+            spatial_analysis=spatial_analysis,
+            environmental_res=environmental_res,
+            physio_age_sec=physio_age_sec,
+            spatial_age_sec=spatial_age_sec,
+            env_age_sec=env_age_sec,
+            is_manual_override=is_manual_override
+        )
+
         weights_dict: Dict[str, float] = {}
         contributions_dict: Dict[str, float] = {}
         mode_status_str = ""
@@ -187,7 +203,16 @@ class DynamicMultimodalFusionEngine:
         mode_notice = ""
         dynamic_gating_details = None
 
-        if selected_mode == FusionMode.STATIC_WEIGHTED:
+        if selected_mode == FusionMode.RELIABILITY_AWARE:
+            mode_name = "Reliability-Aware Adaptive Multimodal Fusion"
+            is_model_trained = False  # Deterministic adaptive weighting, not a trained threat model
+            mode_status_str = "RELIABILITY-AWARE ADAPTIVE WEIGHTING"
+            mode_notice = adaptive_eval["message"]
+            final_score = adaptive_eval["overall_context_index"]
+            weights_dict = adaptive_eval["adaptive_weights"]
+            contributions_dict = adaptive_eval["modality_contributions"]
+
+        elif selected_mode == FusionMode.STATIC_WEIGHTED:
             # Operational Reference Baseline
             mode_name = "Static Weighted Fusion Baseline"
             is_model_trained = False  # Fixed formula is non-trained baseline
@@ -320,9 +345,15 @@ class DynamicMultimodalFusionEngine:
             "environment_risk_score": e_norm,
             # Weights & Contributions
             "weights": weights_dict,
+            "adaptive_weights": adaptive_eval["adaptive_weights"],
             "contributions": contributions_dict,
             "contributions_pct": {k: round(v * 100.0, 2) for k, v in contributions_dict.items()},
+            "unnormalized_contributions": adaptive_eval.get("unnormalized_contributions", {}),
             # Reliability & Quality Details
+            "adaptive_fusion": adaptive_eval,
+            "modality_reliabilities": adaptive_eval["modality_reliabilities"],
+            "formula_str": adaptive_eval["formula_str"],
+            "learned_gating_status": "LEARNED GATING: NOT TRAINED",
             "reliability_summary": reliability_summary,
             "uncertainty_index": uncertainty_index,
             "is_complete_tri_modal": is_complete_tri_modal,
