@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPS Sensor Component</title>
+  <style>
+    :root {
+      --primary-accent: #3978C5;
+      --primary-accent-hover: #2B61A6;
+      --status-safe-color: #24845B;
+      --status-safe-bg: #EDF7F2;
+      --status-safe-border: #C6E7D7;
+      --status-warn-color: #B7791F;
+      --status-warn-bg: #FEF8EC;
+      --status-warn-border: #F7E4BE;
+      --status-danger-color: #C44444;
+      --status-danger-bg: #FDF2F2;
+      --status-danger-border: #F8CECE;
+      --status-neutral-bg: #F1F5F9;
+      --status-neutral-color: #64748B;
+      --status-neutral-border: #CBD5E1;
+      --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-family);
+      background: transparent;
+      overflow: hidden;
+      padding: 2px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .gps-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+    }
+
+    /* Status Pill */
+    .med-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      width: fit-content;
+      transition: all 0.2s ease;
+    }
+
+    .pill-connected {
+      background-color: var(--status-safe-bg);
+      color: var(--status-safe-color);
+      border: 1px solid var(--status-safe-border);
+    }
+
+    .pill-warn {
+      background-color: var(--status-warn-bg);
+      color: var(--status-warn-color);
+      border: 1px solid var(--status-warn-border);
+    }
+
+    .pill-error {
+      background-color: var(--status-danger-bg);
+      color: var(--status-danger-color);
+      border: 1px solid var(--status-danger-border);
+    }
+
+    .pill-off {
+      background-color: var(--status-neutral-bg);
+      color: var(--status-neutral-color);
+      border: 1px solid var(--status-neutral-border);
+    }
+
+    .pill-pulse {
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.8; }
+      50% { opacity: 1; }
+      100% { opacity: 0.8; }
+    }
+
+    /* Button */
+    .gps-button {
+      width: 100%;
+      background-color: var(--primary-accent);
+      color: #FFFFFF;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      padding: 8px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background-color 0.2s ease, opacity 0.2s ease;
+      touch-action: manipulation;
+      min-height: 38px;
+      font-family: inherit;
+    }
+
+    .gps-button:hover:not(:disabled) {
+      background-color: var(--primary-accent-hover);
+    }
+
+    .gps-button:active:not(:disabled) {
+      transform: translateY(1px);
+    }
+
+    .gps-button:disabled {
+      background-color: #94A3B8;
+      cursor: not-allowed;
+      opacity: 0.85;
+    }
+
+    /* Status Message */
+    .status-msg-box {
+      font-size: 0.82rem;
+      color: #68758A;
+      line-height: 1.4;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background-color: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      display: none;
+    }
+
+    .status-msg-box.show {
+      display: block;
+    }
+
+    .status-msg-box.msg-error {
+      background-color: var(--status-danger-bg);
+      color: var(--status-danger-color);
+      border-color: var(--status-danger-border);
+    }
+
+    .status-msg-box.msg-warn {
+      background-color: var(--status-warn-bg);
+      color: var(--status-warn-color);
+      border-color: var(--status-warn-border);
+    }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-radius: 50%;
+      border-top-color: #FFFFFF;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="gps-container" id="gps-container">
+    <div id="pill-wrap">
+      <span class="med-status-pill pill-off" id="status-pill">GPS: OFF</span>
+    </div>
+    
+    <button type="button" class="gps-button" id="btn-gps" onclick="handleButtonClick()">
+      <span id="btn-icon">📍</span>
+      <span id="btn-label">[ Get Live Location ]</span>
+    </button>
+
+    <div class="status-msg-box" id="status-msg"></div>
+  </div>
+
+  <script>
+    (function() {
+      // Streamlit Component Protocol Functions
+      function sendToStreamlit(data) {
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:setComponentValue",
+          value: data
+        }, "*");
+      }
+
+      function notifyReady() {
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:componentReady",
+          apiVersion: 1
+        }, "*");
+      }
+
+      function setFrameHeight() {
+        const height = document.getElementById("gps-container").scrollHeight + 6;
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:setFrameHeight",
+          height: height
+        }, "*");
+      }
+
+      // DOM Elements
+      const statusPill = document.getElementById("status-pill");
+      const btnGps = document.getElementById("btn-gps");
+      const btnIcon = document.getElementById("btn-icon");
+      const btnLabel = document.getElementById("btn-label");
+      const statusMsg = document.getElementById("status-msg");
+
+      // Internal State
+      let currentState = "OFF";
+      let currentRequestId = 0;
+      let lastHandledTrigger = null;
+      let permWaitTimer = null;
+
+      function updateUI(state, text, msg, msgType) {
+        currentState = state;
+
+        // Reset Pill classes
+        statusPill.className = "med-status-pill";
+        statusMsg.className = "status-msg-box";
+
+        if (state === "OFF") {
+          statusPill.classList.add("pill-off");
+          statusPill.textContent = "GPS: OFF";
+          btnIcon.innerHTML = "📍";
+          btnLabel.textContent = "[ Get Live Location ]";
+          btnGps.disabled = false;
+        } else if (state === "WAITING") {
+          statusPill.classList.add("pill-warn", "pill-pulse");
+          statusPill.textContent = "GPS: WAITING FOR PERMISSION";
+          btnIcon.innerHTML = "<span class='spinner'></span>";
+          btnLabel.textContent = "Waiting for Permission...";
+          btnGps.disabled = true;
+        } else if (state === "ACQUIRING") {
+          statusPill.classList.add("pill-warn", "pill-pulse");
+          statusPill.textContent = "GPS: ACQUIRING LOCATION...";
+          btnIcon.innerHTML = "<span class='spinner'></span>";
+          btnLabel.textContent = "Acquiring Coordinates...";
+          btnGps.disabled = true;
+        } else if (state === "CONNECTED") {
+          statusPill.classList.add("pill-connected");
+          statusPill.textContent = text || "GPS: CONNECTED";
+          btnIcon.innerHTML = "🔄";
+          btnLabel.textContent = "[ Refresh GPS Fix ]";
+          btnGps.disabled = false;
+        } else if (state === "LOW_ACCURACY") {
+          statusPill.classList.add("pill-warn");
+          statusPill.textContent = "GPS: LOW ACCURACY";
+          btnIcon.innerHTML = "🔄";
+          btnLabel.textContent = "[ Refresh GPS Fix ]";
+          btnGps.disabled = false;
+        } else if (state === "ERROR" || state === "PERMISSION_DENIED" || state === "POSITION_UNAVAILABLE" || state === "TIMEOUT") {
+          statusPill.classList.add("pill-error");
+          statusPill.textContent = state === "PERMISSION_DENIED" ? "GPS: PERMISSION DENIED" :
+                                   state === "TIMEOUT" ? "GPS: REQUEST TIMED OUT" :
+                                   state === "POSITION_UNAVAILABLE" ? "GPS: UNAVAILABLE" : "GPS: ERROR";
+          btnIcon.innerHTML = "🔄";
+          btnLabel.textContent = "[ Retry GPS ]";
+          btnGps.disabled = false;
+        }
+
+        // Message Box
+        if (msg) {
+          statusMsg.textContent = msg;
+          statusMsg.classList.add("show");
+          if (msgType) statusMsg.classList.add("msg-" + msgType);
+        } else {
+          statusMsg.classList.remove("show");
+        }
+
+        setFrameHeight();
+      }
+
+      window.handleButtonClick = function() {
+        startLocationAcquisition();
+      };
+
+      function startLocationAcquisition() {
+        if (!navigator.geolocation) {
+          updateUI("ERROR", null, "Your browser does not support geolocation.", "error");
+          sendToStreamlit({ status: "NOT_SUPPORTED", message: "Browser does not support geolocation." });
+          return;
+        }
+
+        currentRequestId++;
+        const thisReqId = currentRequestId;
+
+        // Stage 0: Show Waiting for permission initially
+        updateUI("WAITING", null, "Please allow location access if prompted by your browser.", "warn");
+
+        if (permWaitTimer) clearTimeout(permWaitTimer);
+        permWaitTimer = setTimeout(function() {
+          if (thisReqId === currentRequestId && currentState === "WAITING") {
+            updateUI("ACQUIRING", null, "Acquiring coordinates (checking cached & cell/wifi network fix)...", null);
+          }
+        }, 1200);
+
+        // Fast Fix Stage:
+        // enableHighAccuracy: false, timeout: 6000ms, maximumAge: 60000ms (1 min fresh cache)
+        navigator.geolocation.getCurrentPosition(
+          function(position) {
+            if (thisReqId !== currentRequestId) return;
+            if (permWaitTimer) clearTimeout(permWaitTimer);
+
+            const r_acc = position.coords.accuracy;
+            const isCached = (Date.now() - position.timestamp) > 4000;
+            const isLowAcc = r_acc > 100;
+
+            const clientDate = new Date();
+            const payload = {
+              status: "SUCCESS",
+              coords: {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: r_acc,
+                altitude: position.coords.altitude,
+                heading: position.coords.heading,
+                speed: position.coords.speed
+              },
+              timestamp: position.timestamp,
+              client_hour: clientDate.getHours() + clientDate.getMinutes() / 60.0,
+              client_time_str: clientDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }),
+              is_cached: isCached,
+              stage: "fast",
+              request_id: thisReqId
+            };
+
+            // Send to Python immediately!
+            sendToStreamlit(payload);
+
+            const fixTypeStr = isCached ? "Cached Fix" : "Live Fix";
+            const accStr = `±${Math.round(r_acc)}m (${fixTypeStr})`;
+            if (isLowAcc) {
+              updateUI("LOW_ACCURACY", "GPS: LOW ACCURACY", `Fast fix acquired at ±${Math.round(r_acc)}m. Proximity may be approximate. Refining...`, "warn");
+            } else {
+              updateUI("CONNECTED", "GPS: CONNECTED", `Location fix active at ${accStr}.`, null);
+            }
+
+            // High Accuracy Refinement (if accuracy > 20m)
+            if (r_acc > 20) {
+              refineLocation(thisReqId, r_acc);
+            }
+          },
+          function(error) {
+            if (thisReqId !== currentRequestId) return;
+            if (permWaitTimer) clearTimeout(permWaitTimer);
+
+            // If fast fix timed out (code 3), try a 7-second satellite attempt before giving up
+            if (error.code === 3) {
+              updateUI("ACQUIRING", null, "Network fix timed out. Attempting satellite GPS fix...", null);
+              navigator.geolocation.getCurrentPosition(
+                function(satPos) {
+                  if (thisReqId !== currentRequestId) return;
+                  const satAcc = satPos.coords.accuracy;
+                  const satPayload = {
+                    status: "SUCCESS",
+                    coords: {
+                      latitude: satPos.coords.latitude,
+                      longitude: satPos.coords.longitude,
+                      accuracy: satAcc
+                    },
+                    timestamp: satPos.timestamp,
+                    is_cached: false,
+                    stage: "satellite",
+                    request_id: thisReqId
+                  };
+                  sendToStreamlit(satPayload);
+                  updateUI(satAcc > 100 ? "LOW_ACCURACY" : "CONNECTED", null, `Satellite fix acquired (±${Math.round(satAcc)}m).`, null);
+                },
+                function(satErr) {
+                  if (thisReqId !== currentRequestId) return;
+                  handleError(satErr, thisReqId);
+                },
+                { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+              );
+            } else {
+              handleError(error, thisReqId);
+            }
+          },
+          { enableHighAccuracy: false, timeout: 6000, maximumAge: 60000 }
+        );
+      }
+
+      function refineLocation(reqId, currentAcc) {
+        navigator.geolocation.getCurrentPosition(
+          function(refinedPos) {
+            if (reqId !== currentRequestId) return;
+            const newAcc = refinedPos.coords.accuracy;
+            if (newAcc < currentAcc) {
+              const clientDate = new Date();
+              const refPayload = {
+                status: "SUCCESS",
+                coords: {
+                  latitude: refinedPos.coords.latitude,
+                  longitude: refinedPos.coords.longitude,
+                  accuracy: newAcc
+                },
+                timestamp: refinedPos.timestamp,
+                client_hour: clientDate.getHours() + clientDate.getMinutes() / 60.0,
+                client_time_str: clientDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }),
+                is_cached: false,
+                stage: "refined",
+                request_id: reqId
+              };
+              sendToStreamlit(refPayload);
+              updateUI(newAcc > 100 ? "LOW_ACCURACY" : "CONNECTED", null, `Refined high-accuracy fix active (±${Math.round(newAcc)}m).`, null);
+            }
+          },
+          function(err) {
+            // Silently keep fast fix
+          },
+          { enableHighAccuracy: true, timeout: 9000, maximumAge: 5000 }
+        );
+      }
+
+      function handleError(error, reqId) {
+        if (reqId !== currentRequestId) return;
+        let stateCode = "ERROR";
+        let userMsg = "Failed to acquire GPS location.";
+        let errType = "error";
+
+        if (error.code === 1) { // PERMISSION_DENIED
+          stateCode = "PERMISSION_DENIED";
+          userMsg = "Location permission was denied. Please allow location in your browser site settings and tap Retry.";
+        } else if (error.code === 2) { // POSITION_UNAVAILABLE
+          stateCode = "POSITION_UNAVAILABLE";
+          userMsg = "Location unavailable. Please check that GPS / Location Services are enabled on your device.";
+        } else if (error.code === 3) { // TIMEOUT
+          stateCode = "TIMEOUT";
+          userMsg = "GPS request timed out. Please tap Retry or move to an open area.";
+          errType = "warn";
+        }
+
+        updateUI(stateCode, null, userMsg, errType);
+        sendToStreamlit({
+          status: stateCode,
+          code: error.code,
+          message: userMsg,
+          request_id: reqId
+        });
+      }
+
+      // Listen for Streamlit render events
+      window.addEventListener("message", function(event) {
+        if (!event.data || event.data.type !== "streamlit:render") return;
+        const args = event.data.args || {};
+
+        // If Python requested a trigger via force_request_id
+        if (args.force_request_id && args.force_request_id !== lastHandledTrigger) {
+          lastHandledTrigger = args.force_request_id;
+          startLocationAcquisition();
+        }
+
+        // If initial sync has existing status
+        if (args.initial_status && currentState === "OFF") {
+          updateUI(args.initial_status, null, args.initial_msg || null, null);
+        }
+
+        setFrameHeight();
+      });
+
+      // Auto resize observer
+      const resizeObserver = new ResizeObserver(function() {
+        setFrameHeight();
+      });
+      resizeObserver.observe(document.body);
+
+      // Initialize Streamlit handshake
+      notifyReady();
+      setFrameHeight();
+    })();
+  </script>
+</body>
+</html>

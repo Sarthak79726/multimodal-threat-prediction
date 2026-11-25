@@ -1,0 +1,18 @@
+id,name,latitude,longitude,radius,location_type,base_risk_score,lighting_level,isolation_index,crime_rate_index,distance_to_security_m,description
+main_building,Main Building,23.4123,85.4399,150.0,administrative_hub,0.08,9.5,0.05,0.02,20.0,Central administrative block (Clock Tower) with active 24/7 security & CCTV.
+rnd,R&D,23.4135,85.4385,150.0,academic_zone,0.12,8.5,0.15,0.05,50.0,R&D Building & Central Library academic research center.
+h1,H1,23.414209,85.440313,120.0,residential_hostel,0.25,7.5,0.25,0.1,120.0,Hostel 1 residential sector.
+h2,H2,23.413707,85.438484,120.0,residential_hostel,0.25,7.5,0.25,0.1,130.0,Hostel 2 residential sector.
+h3,H3,23.41612,85.439653,120.0,residential_hostel,0.28,7.0,0.3,0.12,150.0,Hostel 3 residential sector.
+h4,H4,23.415602,85.437798,120.0,residential_hostel,0.28,7.0,0.3,0.12,170.0,Hostel 4 residential sector.
+girls_hostel,Girls Hostel Area / H8-H9,23.414,85.4415,150.0,residential_hostel,0.2,8.5,0.2,0.08,80.0,Girls Hostel Complex / H8-H9 with dedicated security checkpoints.
+pmc,PMC,23.416205,85.440121,150.0,unlit_industrial_alley,0.65,2.5,0.8,0.68,480.0,PMC (Polytechnic & Medical Outpost).
+h6,H6,23.422811,85.433202,120.0,residential_hostel,0.3,6.8,0.35,0.15,200.0,Hostel 6 residential sector.
+h7,H7,23.424604,85.43213,120.0,residential_hostel,0.32,6.5,0.4,0.18,230.0,Hostel 7 residential sector.
+dispensary,Dispensary,23.4105,85.4388,100.0,medical_center,0.15,8.5,0.18,0.05,100.0,Dispensary / Health Centre with night duty staff.
+h10,H10,23.419115,85.434912,120.0,isolated_hostel_boundary,0.45,4.5,0.7,0.4,400.0,Hostel 10 perimeter sector.
+h11,H11,23.418032,85.435418,120.0,isolated_forest_boundary,0.5,3.5,0.78,0.5,450.0,Hostel 11 residential sector.
+h12,H12,23.418919,85.434311,120.0,isolated_forest_boundary,0.55,2.5,0.85,0.6,520.0,Hostel 12 sector adjacent to campus perimeter.
+h13,H13,23.41781,85.434655,120.0,isolated_forest_boundary,0.6,1.5,0.92,0.75,600.0,Hostel 13 sector with verified OSM geographic coordinates.
+sports_complex,Sports Complex,23.42502,85.434623,200.0,open_recreational,0.35,4.5,0.55,0.25,250.0,Sports Complex & Gym Ground.
+main_gate,Main Gate,23.4055,85.435,150.0,security_checkpoint,0.05,9.8,0.02,0.01,0.0,24/7 guarded Main Gate (Security Checkpoint 1).

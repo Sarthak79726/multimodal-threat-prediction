@@ -1,0 +1,22 @@
+{
+  "dataset_name": "BIT_Mesra_Synthetic_Environmental_Dataset",
+  "dataset_version": "1.0_synthetic_180days",
+  "synthetic_provenance": "SYNTHETIC_SIMULATION_RULE_GENERATED",
+  "data_disclaimer": "SYNTHETIC-DATA TRAINED MODEL \u2014 EXPERIMENTAL PREDICTION \u2014 NOT LIVE SENSOR MEASUREMENT",
+  "training_date": "2026-11-24 18:05:42",
+  "training_samples": 48960,
+  "validation_samples": 12240,
+  "test_samples": 12240,
+  "target": "simulated_lighting_category",
+  "validation_macro_f1": 0.7950176634306102,
+  "test_macro_f1": 0.7833,
+  "test_accuracy": 0.8846,
+  "lux_metrics": {
+    "Val_RMSE": 653.76,
+    "Val_MAE": 381.18,
+    "Val_R2": 0.7507,
+    "Test_RMSE": 650.54,
+    "Test_MAE": 378.1,
+    "Test_R2": 0.7571
+  }
+}

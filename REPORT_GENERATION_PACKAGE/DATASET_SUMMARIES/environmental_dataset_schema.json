@@ -1,0 +1,14 @@
+{
+  "simulated_day": "int64",
+  "date": "str",
+  "day_of_week": "str",
+  "day_of_week_num": "int64",
+  "weekend_indicator": "int64",
+  "hour_of_day": "int64",
+  "location": "str",
+  "simulated_crowd_density_category": "str",
+  "simulated_lighting_category": "str",
+  "simulated_lighting_lux_estimate": "float64",
+  "split": "str",
+  "provenance": "str"
+}

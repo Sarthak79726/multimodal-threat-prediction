@@ -1,0 +1,77 @@
+feature_index,feature_name,body_location,sensor_type,measurement_metric,unit
+1,chest_ecg_mean,chest,ECG,mean,mV
+2,chest_ecg_std,chest,ECG,std,mV
+3,chest_ecg_min,chest,ECG,min,mV
+4,chest_ecg_max,chest,ECG,max,mV
+5,chest_ecg_skew,chest,ECG,skew,dimensionless
+6,chest_ecg_slope,chest,ECG,slope,unit/sec
+7,chest_ecg_peak_count,chest,ECG,peak_count,count
+8,chest_ecg_hr_bpm,chest,ECG,hr_bpm,BPM
+9,chest_ecg_rr_mean,chest,ECG,rr_mean,seconds
+10,chest_ecg_rr_std,chest,ECG,rr_std,seconds
+11,chest_ecg_rmssd,chest,ECG,rmssd,seconds
+12,chest_eda_mean,chest,EDA,mean,μS
+13,chest_eda_std,chest,EDA,std,μS
+14,chest_eda_min,chest,EDA,min,μS
+15,chest_eda_max,chest,EDA,max,μS
+16,chest_eda_skew,chest,EDA,skew,dimensionless
+17,chest_eda_slope,chest,EDA,slope,unit/sec
+18,chest_emg_mean,chest,EMG,mean,mV
+19,chest_emg_std,chest,EMG,std,mV
+20,chest_emg_min,chest,EMG,min,mV
+21,chest_emg_max,chest,EMG,max,mV
+22,chest_emg_skew,chest,EMG,skew,dimensionless
+23,chest_emg_slope,chest,EMG,slope,unit/sec
+24,chest_temp_mean,chest,TEMP,mean,°C
+25,chest_temp_std,chest,TEMP,std,°C
+26,chest_temp_min,chest,TEMP,min,°C
+27,chest_temp_max,chest,TEMP,max,°C
+28,chest_temp_skew,chest,TEMP,skew,dimensionless
+29,chest_temp_slope,chest,TEMP,slope,unit/sec
+30,chest_resp_mean,chest,RESP,mean,V
+31,chest_resp_std,chest,RESP,std,V
+32,chest_resp_min,chest,RESP,min,V
+33,chest_resp_max,chest,RESP,max,V
+34,chest_resp_skew,chest,RESP,skew,dimensionless
+35,chest_resp_slope,chest,RESP,slope,unit/sec
+36,chest_acc_mag_mean,chest,ACC,mag_mean,g / m/s²
+37,chest_acc_mag_std,chest,ACC,mag_std,g / m/s²
+38,chest_acc_mag_max,chest,ACC,mag_max,g / m/s²
+39,chest_acc_x_mean,chest,ACC,x_mean,g / m/s²
+40,chest_acc_x_std,chest,ACC,x_std,g / m/s²
+41,chest_acc_y_mean,chest,ACC,y_mean,g / m/s²
+42,chest_acc_y_std,chest,ACC,y_std,g / m/s²
+43,chest_acc_z_mean,chest,ACC,z_mean,g / m/s²
+44,chest_acc_z_std,chest,ACC,z_std,g / m/s²
+45,wrist_acc_mag_mean,wrist,ACC,mag_mean,g / m/s²
+46,wrist_acc_mag_std,wrist,ACC,mag_std,g / m/s²
+47,wrist_acc_mag_max,wrist,ACC,mag_max,g / m/s²
+48,wrist_acc_x_mean,wrist,ACC,x_mean,g / m/s²
+49,wrist_acc_x_std,wrist,ACC,x_std,g / m/s²
+50,wrist_acc_y_mean,wrist,ACC,y_mean,g / m/s²
+51,wrist_acc_y_std,wrist,ACC,y_std,g / m/s²
+52,wrist_acc_z_mean,wrist,ACC,z_mean,g / m/s²
+53,wrist_acc_z_std,wrist,ACC,z_std,g / m/s²
+54,wrist_bvp_mean,wrist,BVP,mean,unitless
+55,wrist_bvp_std,wrist,BVP,std,unitless
+56,wrist_bvp_min,wrist,BVP,min,unitless
+57,wrist_bvp_max,wrist,BVP,max,unitless
+58,wrist_bvp_skew,wrist,BVP,skew,dimensionless
+59,wrist_bvp_slope,wrist,BVP,slope,unit/sec
+60,wrist_bvp_peak_count,wrist,BVP,peak_count,count
+61,wrist_bvp_hr_bpm,wrist,BVP,hr_bpm,BPM
+62,wrist_bvp_rr_mean,wrist,BVP,rr_mean,seconds
+63,wrist_bvp_rr_std,wrist,BVP,rr_std,seconds
+64,wrist_bvp_rmssd,wrist,BVP,rmssd,seconds
+65,wrist_eda_mean,wrist,EDA,mean,μS
+66,wrist_eda_std,wrist,EDA,std,μS
+67,wrist_eda_min,wrist,EDA,min,μS
+68,wrist_eda_max,wrist,EDA,max,μS
+69,wrist_eda_skew,wrist,EDA,skew,dimensionless
+70,wrist_eda_slope,wrist,EDA,slope,unit/sec
+71,wrist_temp_mean,wrist,TEMP,mean,°C
+72,wrist_temp_std,wrist,TEMP,std,°C
+73,wrist_temp_min,wrist,TEMP,min,°C
+74,wrist_temp_max,wrist,TEMP,max,°C
+75,wrist_temp_skew,wrist,TEMP,skew,dimensionless
+76,wrist_temp_slope,wrist,TEMP,slope,unit/sec

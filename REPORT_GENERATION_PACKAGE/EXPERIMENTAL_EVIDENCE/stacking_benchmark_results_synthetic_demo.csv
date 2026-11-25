@@ -1,0 +1,8 @@
+Model / Branch,Accuracy,Precision,Recall,F1-Score,ROC-AUC,PR-AUC,Brier Score,ECE
+1. Physiological Only,0.8286,0.2105,0.9,0.3412,0.9235,0.4222,0.1257,0.2663
+2. Spatial Only,0.7041,0.1241,0.825,0.2157,0.8414,0.1927,0.1891,0.3449
+3. Environmental Only,0.8397,0.0982,0.275,0.1447,0.6325,0.0869,0.1214,0.2107
+4. Weighted Late Fusion Baseline,0.963,0.5926,0.8,0.6809,0.9803,0.7364,0.1086,0.2718
+5. Stacking (Logistic Regression),0.9741,1.0,0.475,0.6441,0.9939,0.9009,0.0181,0.0301
+6. Stacking (Random Forest),0.9692,0.8947,0.425,0.5763,0.9823,0.8196,0.023,0.0277
+7. Stacking (XGBoost),0.979,0.8286,0.725,0.7733,0.9902,0.8933,0.0148,0.0082

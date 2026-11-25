@@ -1,0 +1,47 @@
+{
+  "total_rows": 73440,
+  "crowd_counts": {
+    "High": 35665,
+    "Low": 22055,
+    "Medium": 15720
+  },
+  "crowd_proportions": {
+    "High": 0.4856345315904139,
+    "Low": 0.3003131808278867,
+    "Medium": 0.21405228758169934
+  },
+  "lighting_counts": {
+    "Good": 52221,
+    "Low": 12682,
+    "Dark": 8537
+  },
+  "lighting_proportions": {
+    "Good": 0.7110702614379085,
+    "Low": 0.1726851851851852,
+    "Dark": 0.11624455337690631
+  },
+  "splits": {
+    "Train": 48960,
+    "Validation": 12240,
+    "Test": 12240
+  },
+  "locations": {
+    "Main Building": 4320,
+    "R&D": 4320,
+    "H1": 4320,
+    "H2": 4320,
+    "H3": 4320,
+    "H4": 4320,
+    "Girls Hostel Area / H8-H9": 4320,
+    "PMC": 4320,
+    "H6": 4320,
+    "H7": 4320,
+    "Dispensary": 4320,
+    "H10": 4320,
+    "H11": 4320,
+    "H12": 4320,
+    "H13": 4320,
+    "Sports Complex": 4320,
+    "Main Gate": 4320
+  }
+}

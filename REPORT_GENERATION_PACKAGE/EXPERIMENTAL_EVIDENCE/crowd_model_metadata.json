@@ -1,0 +1,14 @@
+{
+  "dataset_name": "BIT_Mesra_Synthetic_Environmental_Dataset",
+  "dataset_version": "1.0_synthetic_180days",
+  "synthetic_provenance": "SYNTHETIC_SIMULATION_RULE_GENERATED",
+  "data_disclaimer": "SYNTHETIC-DATA TRAINED MODEL \u2014 EXPERIMENTAL PREDICTION \u2014 NOT LIVE SENSOR MEASUREMENT",
+  "training_date": "2026-11-24 18:05:42",
+  "training_samples": 48960,
+  "validation_samples": 12240,
+  "test_samples": 12240,
+  "target": "simulated_crowd_density_category",
+  "validation_macro_f1": 0.6705716794892664,
+  "test_macro_f1": 0.6722,
+  "test_accuracy": 0.7132
+}
