@@ -16,8 +16,8 @@
   {
     "id": "rnd",
     "name": "R&D",
-    "latitude": 23.4135,
-    "longitude": 85.4385,
+    "latitude": 23.413154,
+    "longitude": 85.441643,
     "radius": 150.0,
     "location_type": "academic_zone",
     "base_risk_score": 0.12,
@@ -86,8 +86,8 @@
   {
     "id": "girls_hostel",
     "name": "Girls Hostel Area / H8-H9",
-    "latitude": 23.414,
-    "longitude": 85.4415,
+    "latitude": 23.41618,
+    "longitude": 85.442107,
     "radius": 150.0,
     "location_type": "residential_hostel",
     "base_risk_score": 0.2,

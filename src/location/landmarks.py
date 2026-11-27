@@ -30,8 +30,8 @@ BIT_MESRA_LANDMARKS_DB: Dict[str, Dict[str, Any]] = {
     "rnd": {
         "id": "rnd",
         "name": "R&D",
-        "latitude": 23.413500,
-        "longitude": 85.438500,
+        "latitude": 23.413154,
+        "longitude": 85.441643,
         "radius": 150.0,
         "location_type": "academic_zone",
         "base_risk_score": 0.12,
@@ -100,8 +100,8 @@ BIT_MESRA_LANDMARKS_DB: Dict[str, Dict[str, Any]] = {
     "girls_hostel": {
         "id": "girls_hostel",
         "name": "Girls Hostel Area / H8-H9",
-        "latitude": 23.414000,
-        "longitude": 85.441500,
+        "latitude": 23.416180,
+        "longitude": 85.442107,
         "radius": 150.0,
         "location_type": "residential_hostel",
         "base_risk_score": 0.20,

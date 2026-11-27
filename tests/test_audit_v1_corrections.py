@@ -148,13 +148,12 @@ class TestAuditV1Corrections(unittest.TestCase):
     ):
         """
         Verifies that coordinates located equidistant between nearby landmarks
-        (e.g. R&D Building and Hostel 2, distance = 23.1m) flag AMBIGUOUS_LOCATION.
+        (e.g. H3 and PMC, distance = 48.7m) flag AMBIGUOUS_LOCATION.
         """
-        rnd_coord = config.BIT_MESRA_LANDMARKS_DB["rnd"]
-        h2_coord = config.BIT_MESRA_LANDMARKS_DB["h2"]
-        # Exact midpoint coordinates between R&D and H2
-        mid_lat = (rnd_coord["latitude"] + h2_coord["latitude"]) / 2.0
-        mid_lon = (rnd_coord["longitude"] + h2_coord["longitude"]) / 2.0
+        h3_coord = config.BIT_MESRA_LANDMARKS_DB["h3"]
+        pmc_coord = config.BIT_MESRA_LANDMARKS_DB["pmc"]
+        mid_lat = (h3_coord["latitude"] + pmc_coord["latitude"]) / 2.0
+        mid_lon = (h3_coord["longitude"] + pmc_coord["longitude"]) / 2.0
 
         res = self.engine.resolve_campus_location(
             lat=mid_lat,
@@ -166,9 +165,8 @@ class TestAuditV1Corrections(unittest.TestCase):
         self.assertIsNone(res["resolved_location"])
         self.assertTrue(res["is_within_geofence"])
         self.assertGreaterEqual(len(res["ambiguous_candidates"]), 2)
-        # Should flag R&D and H2 as candidates
         cand_str = " ".join(res["ambiguous_candidates"])
-        self.assertTrue("R&D" in cand_str and "H2" in cand_str)
+        self.assertTrue("H3" in cand_str and "PMC" in cand_str)
 
     def test_unambiguous_gps_resolution(self):
         """Verifies unambiguous landmark resolution when coordinates are firmly at one landmark."""

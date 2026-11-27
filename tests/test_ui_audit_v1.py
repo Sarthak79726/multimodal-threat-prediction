@@ -77,16 +77,16 @@ class TestUIAuditV1(unittest.TestCase):
     def test_gps_ambiguity_flagging_in_state(self):
         """Verifies predictor.env_engine resolves ambiguous locations correctly."""
         predictor = MultimodalThreatPredictor()
-        rnd_coord = config.BIT_MESRA_LANDMARKS_DB["rnd"]
-        h2_coord = config.BIT_MESRA_LANDMARKS_DB["h2"]
-        mid_lat = (rnd_coord["latitude"] + h2_coord["latitude"]) / 2.0
-        mid_lon = (rnd_coord["longitude"] + h2_coord["longitude"]) / 2.0
+        h3_coord = config.BIT_MESRA_LANDMARKS_DB["h3"]
+        pmc_coord = config.BIT_MESRA_LANDMARKS_DB["pmc"]
+        mid_lat = (h3_coord["latitude"] + pmc_coord["latitude"]) / 2.0
+        mid_lon = (h3_coord["longitude"] + pmc_coord["longitude"]) / 2.0
 
         res = predictor.env_engine.resolve_campus_location(mid_lat, mid_lon, accuracy=30.0)
         self.assertEqual(res["status"], "AMBIGUOUS_LOCATION")
         self.assertIsNone(res["resolved_location"])
-        self.assertIn("H2", res["ambiguous_candidates"])
-        self.assertIn("R&D", res["ambiguous_candidates"])
+        self.assertIn("H3", res["ambiguous_candidates"])
+        self.assertIn("PMC", res["ambiguous_candidates"])
 
 if __name__ == "__main__":
     unittest.main()
